@@ -1,6 +1,8 @@
-import { loadPoseDetector } from './pose-detector.mjs?v=0.2.0';
+import { loadPoseDetector } from './pose-detector.mjs?v=0.3.0';
 
 const WORLD = { width: 960, height: 600, horizon: 155, finishLine: 0.96 };
+const WIDE_WORLD = { width: 960, height: 600, horizon: 155 };
+const PORTRAIT_WORLD = { width: 540, height: 960, horizon: 248 };
 const LANE_OFFSET = [-1, 0, 1];
 const DANCE_BPM = 103;
 const BEAT = 60 / DANCE_BPM;
@@ -13,12 +15,12 @@ const ACTION_GLYPHS = { left: '←', down: '↓', up: '↑', right: '→' };
 const ACTION_COLORS = { left: '#69d9ff', down: '#c3f66b', up: '#ffcf65', right: '#ff6cae' };
 const DANCE_CHART = ['left', 'right', 'up', 'down', 'left', 'down', 'right', 'up', 'down', 'left', 'up', 'right', 'left', 'down', 'up', 'right'];
 const ELEMENTS = [
-  'gameCanvas', 'gameFrame', 'gameWave', 'scoreValue', 'timerValue', 'timerFill', 'hearts',
+  'gameCanvas', 'gameFrame', 'arStage', 'gameWave', 'scoreValue', 'timerValue', 'timerFill', 'hearts',
   'startOverlay', 'calibrationOverlay', 'pauseOverlay', 'gameOverOverlay', 'countdownOverlay',
   'calibrationIcon', 'calibrationLabel', 'calibrationTitle', 'calibrationHint', 'calibrationProgress', 'calibrationFootnote',
   'calibrationCancel', 'pauseEyebrow', 'pauseTitle', 'pauseHint', 'resumeButton', 'pauseQuit',
   'gameOverEyebrow', 'gameOverTitle', 'gameOverText', 'finalScore', 'restartButton', 'gameOverHome',
-  'countdownNumber', 'cameraStart', 'manualStart', 'cameraVideo', 'poseCanvas', 'cameraPlaceholder',
+  'countdownNumber', 'cameraStart', 'manualStart', 'cameraPreview', 'cameraVideo', 'poseCanvas', 'cameraPlaceholder',
   'cameraRec', 'trackingIndicator', 'trackingLabel', 'cameraCard', 'cameraState', 'controlStatus',
   'lanePip', 'pauseButton', 'manualPanel', 'leftControl', 'rightControl', 'duckControl', 'upControl',
   'fullscreenBtn', 'muteBtn', 'gameHud', 'cameraError', 'cameraErrorMessage',
@@ -69,6 +71,22 @@ function renderLives() {
     heart.classList.toggle('is-lost', index >= state.lives);
   }
   ui.hearts.setAttribute('aria-label', `${state.lives} ${state.lives === 1 ? 'vida' : 'vidas'} restantes`);
+}
+
+function setCameraPresentation(active) {
+  const world = active ? PORTRAIT_WORLD : WIDE_WORLD;
+  WORLD.width = world.width;
+  WORLD.height = world.height;
+  WORLD.horizon = world.horizon;
+  canvas.width = world.width;
+  canvas.height = world.height;
+  document.body.classList.toggle('camera-ar-mode', active);
+  if (active) {
+    ui.arStage.appendChild(ui.cameraPreview);
+  } else if (ui.cameraPreview.parentElement !== ui.cameraCard) {
+    ui.cameraCard.insertBefore(ui.cameraPreview, ui.cameraCard.querySelector('.camera-foot'));
+  }
+  createStars();
 }
 
 function setTracking(found) {
@@ -150,6 +168,10 @@ function makeBaseline(samples) {
 
 function drawBackground(time) {
   const { width, height, horizon } = WORLD;
+  if (document.body.classList.contains('camera-ar-mode')) {
+    ctx.clearRect(0, 0, width, height);
+    return;
+  }
   const sky = ctx.createLinearGradient(0, 0, 0, height);
   sky.addColorStop(0, '#171425');
   sky.addColorStop(0.37, '#151425');
@@ -166,8 +188,9 @@ function drawBackground(time) {
   ctx.fillRect(0, horizon - 30, width, 390);
 
   for (const star of state.stars) {
-    const y = horizon + ((star.y + time * star.speed) % 275);
-    const fade = Math.sin((y - horizon) / 275 * Math.PI) * star.alpha;
+    const starRange = height - horizon;
+    const y = horizon + ((star.y + time * star.speed) % starRange);
+    const fade = Math.sin((y - horizon) / starRange * Math.PI) * star.alpha;
     ctx.fillStyle = `rgba(220, 204, 255, ${Math.max(0, fade)})`;
     ctx.beginPath();
     ctx.arc(star.x, y, star.radius, 0, Math.PI * 2);
@@ -177,7 +200,7 @@ function drawBackground(time) {
   ctx.strokeStyle = 'rgba(239, 108, 167, .08)';
   ctx.lineWidth = 1;
   for (let index = 0; index < 9; index += 1) {
-    const x = index * 120 - 60;
+    const x = index * width / 8;
     ctx.beginPath();
     ctx.moveTo(width / 2, horizon + 49);
     ctx.lineTo(x, height + 2);
@@ -186,8 +209,8 @@ function drawBackground(time) {
   for (let index = 1; index <= 11; index += 1) {
     const phase = ((index * 0.115 + time * 0.24) % 1);
     const progress = phase * phase;
-    const y = horizon + progress * 400;
-    const half = 72 + progress * 440;
+    const y = horizon + progress * (height - horizon);
+    const half = width * (0.075 + progress * 0.45);
     ctx.beginPath();
     ctx.moveTo(width / 2 - half, y);
     ctx.lineTo(width / 2 + half, y);
@@ -438,52 +461,64 @@ function drawScene(time, dt) {
 }
 
 function drawDanceTrack() {
-  const topY = WORLD.horizon + 24;
-  const hitY = 505;
-  const topLeft = 176, topWidth = 608, bottomLeft = 58, bottomWidth = 844;
+  const { width, height, horizon } = WORLD;
+  const topY = horizon + height * 0.035;
+  const hitY = height * 0.835;
+  const topWidth = width * 0.64;
+  const topLeft = (width - topWidth) / 2;
+  const bottomWidth = width * 0.94;
+  const bottomLeft = (width - bottomWidth) / 2;
+  const trackBottom = Math.min(height - 12, hitY + height * 0.055);
+  const laneWidth = bottomWidth / 4;
+  const padHeight = Math.max(46, height * 0.058);
   ctx.save();
   ctx.beginPath();
   ctx.moveTo(topLeft, topY); ctx.lineTo(topLeft + topWidth, topY);
-  ctx.lineTo(bottomLeft + bottomWidth, hitY + 35); ctx.lineTo(bottomLeft, hitY + 35);
+  ctx.lineTo(bottomLeft + bottomWidth, trackBottom); ctx.lineTo(bottomLeft, trackBottom);
   ctx.closePath();
-  ctx.fillStyle = 'rgba(12, 9, 22, .94)'; ctx.fill();
+  const cameraOverlay = document.body.classList.contains('camera-ar-mode');
+  ctx.fillStyle = cameraOverlay ? 'rgba(12, 9, 22, .22)' : 'rgba(12, 9, 22, .94)'; ctx.fill();
   for (let lane = 0; lane < 4; lane += 1) {
     const color = ACTION_COLORS[ACTIONS[lane]];
     const xTop = topLeft + lane * topWidth / 4;
     const xBottom = bottomLeft + lane * bottomWidth / 4;
     ctx.beginPath();
     ctx.moveTo(xTop, topY); ctx.lineTo(xTop + topWidth / 4, topY);
-    ctx.lineTo(xBottom + bottomWidth / 4, hitY + 35); ctx.lineTo(xBottom, hitY + 35);
+    ctx.lineTo(xBottom + laneWidth, trackBottom); ctx.lineTo(xBottom, trackBottom);
     ctx.closePath();
-    ctx.fillStyle = lane % 2 ? 'rgba(34, 23, 48, .88)' : 'rgba(23, 18, 38, .9)'; ctx.fill();
+    ctx.fillStyle = cameraOverlay
+      ? (lane % 2 ? 'rgba(34, 23, 48, .12)' : 'rgba(23, 18, 38, .16)')
+      : (lane % 2 ? 'rgba(34, 23, 48, .88)' : 'rgba(23, 18, 38, .9)'); ctx.fill();
     ctx.strokeStyle = `${color}55`; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(xTop, topY); ctx.lineTo(xBottom, hitY + 35); ctx.stroke();
-    const padX = xBottom + bottomWidth / 8;
+    const padX = xBottom + laneWidth / 2;
+    const padWidth = laneWidth * 0.76;
+    const padY = hitY - padHeight / 2;
     ctx.save();
     ctx.shadowColor = color; ctx.shadowBlur = state.activePad === ACTIONS[lane] ? 24 : 9;
     ctx.fillStyle = state.activePad === ACTIONS[lane] ? `${color}66` : `${color}20`;
-    roundRect(padX - 72, hitY - 25, 144, 56, 10); ctx.fill();
+    roundRect(padX - padWidth / 2, padY, padWidth, padHeight, Math.min(10, padHeight / 4)); ctx.fill();
     ctx.strokeStyle = `${color}${state.activePad === ACTIONS[lane] ? 'ff' : '99'}`; ctx.lineWidth = 2; ctx.stroke();
     ctx.shadowBlur = 0; ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = '800 30px "DM Sans", sans-serif'; ctx.fillText(ACTION_GLYPHS[ACTIONS[lane]], padX, hitY + 2);
+    ctx.font = `800 ${Math.round(Math.min(30, padHeight * 0.55))}px "DM Sans", sans-serif`; ctx.fillText(ACTION_GLYPHS[ACTIONS[lane]], padX, hitY);
     ctx.restore();
   }
   ctx.strokeStyle = '#f6e6ff'; ctx.lineWidth = 2; ctx.shadowColor = '#ff49a3'; ctx.shadowBlur = 13;
-  ctx.beginPath(); ctx.moveTo(bottomLeft, hitY - 31); ctx.lineTo(bottomLeft + bottomWidth, hitY - 31); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(bottomLeft, hitY - padHeight * 0.72); ctx.lineTo(bottomLeft + bottomWidth, hitY - padHeight * 0.72); ctx.stroke();
   ctx.shadowBlur = 0;
   ctx.fillStyle = '#f3d9ff'; ctx.font = '700 13px "Barlow Condensed", sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('¡PISÁ AL RITMO!', WORLD.width / 2, 155);
+  ctx.fillText('¡PISÁ AL RITMO!', width / 2, horizon - height * 0.025);
   for (const note of state.notes) {
     if (note.judged) continue;
     const progress = 1 - (note.time - state.gameTime) / NOTE_TRAVEL;
     if (progress < 0 || progress > 1.08) continue;
     const y = topY + progress * (hitY - topY - 34);
-    const x = 58 + (note.lane + 0.5) * 844 / 4;
-    const width = 50 + progress * 45;
-    const height = 26 + progress * 24;
+    const x = bottomLeft + (note.lane + 0.5) * laneWidth;
+    const noteWidth = Math.min(laneWidth * 0.78, laneWidth * (0.36 + progress * 0.22));
+    const noteHeight = Math.max(25, height * (0.027 + progress * 0.025));
     const color = ACTION_COLORS[note.action];
     ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 12;
-    ctx.fillStyle = color; roundRect(x - width / 2, y - height / 2, width, height, 7); ctx.fill();
+    ctx.fillStyle = color; roundRect(x - noteWidth / 2, y - noteHeight / 2, noteWidth, noteHeight, 7); ctx.fill();
     ctx.shadowBlur = 0; ctx.fillStyle = '#17121f'; ctx.font = `900 ${Math.round(22 + progress * 6)}px "DM Sans", sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(ACTION_GLYPHS[note.action], x, y);
     ctx.restore();
@@ -493,7 +528,7 @@ function drawDanceTrack() {
 
 function createStars() {
   state.stars = Array.from({ length: 60 }, () => ({
-    x: rand(70, 890), y: rand(0, 275), speed: rand(8, 38), radius: rand(0.5, 1.35), alpha: rand(0.18, 0.62),
+    x: rand(12, WORLD.width - 12), y: rand(0, WORLD.height - WORLD.horizon), speed: rand(8, 38), radius: rand(0.5, 1.35), alpha: rand(0.18, 0.62),
   }));
 }
 
@@ -622,7 +657,7 @@ function startCalibration() {
   ui.calibrationIcon.textContent = '◉';
   ui.calibrationLabel.textContent = 'CÁMARA CONECTADA';
   ui.calibrationTitle.innerHTML = 'BUSCANDO<br /><span>TU POSE.</span>';
-  ui.calibrationHint.textContent = 'Parate frente a la cámara, con los hombros y las caderas a la vista.';
+  ui.calibrationHint.textContent = 'Dejá el celular vertical y alejate hasta que se vean cabeza, hombros y caderas.';
   ui.calibrationFootnote.textContent = 'LA IMAGEN SE PROCESA EN TU DISPOSITIVO';
   ui.calibrationProgress.style.width = '0%';
   setCameraState('AJUSTANDO', true);
@@ -667,7 +702,7 @@ function progressCalibration() {
     ui.calibrationIcon.textContent = '↗';
     ui.calibrationLabel.textContent = 'NO ENCONTRAMOS TU POSE';
     ui.calibrationTitle.innerHTML = 'DALE, UN<br /><span>ÚLTIMO INTENTO.</span>';
-    ui.calibrationHint.textContent = 'Alejá un poco la cámara, mejorá la luz y asegurate de que tus hombros y caderas aparezcan en pantalla.';
+    ui.calibrationHint.textContent = 'Alejá un poco el celular, mejorá la luz y asegurate de que tu cuerpo entre en el encuadre vertical.';
     ui.calibrationFootnote.textContent = 'CANCELÁ PARA CAMBIAR A LOS CONTROLES MANUALES';
     ui.calibrationProgress.style.width = '0%';
   } else if (enoughSamples && fraction < 1) {
@@ -816,13 +851,14 @@ async function startCamera() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { facingMode: { ideal: 'user' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
+      video: { facingMode: { ideal: 'user' }, aspectRatio: { ideal: 9 / 16 }, width: { ideal: 540 }, height: { ideal: 960 }, frameRate: { ideal: 24, max: 30 } },
     });
     if (session !== state.cameraSession) {
       for (const track of stream.getTracks()) track.stop();
       return;
     }
     state.stream = stream;
+    setCameraPresentation(true);
     const track = stream.getVideoTracks()[0];
     track?.addEventListener('ended', () => {
       if (session === state.cameraSession) failCamera('La cámara se desconectó. Volvé a activarla para seguir jugando.');
@@ -887,6 +923,7 @@ function failCamera(message) {
 
 function stopCamera() {
   state.cameraSession += 1;
+  setCameraPresentation(false);
   if (state.detector) {
     try { state.detector.close(); } catch (error) { console.warn('[Body Dodge] Error al cerrar detector:', error); }
     state.detector = null;
@@ -1248,5 +1285,4 @@ createStars();
 renderLives();
 updateHUD();
 requestAnimationFrame(updateFrame);
-
 
