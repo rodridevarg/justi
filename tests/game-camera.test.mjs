@@ -15,7 +15,7 @@ function harness({ permission, detectorLoader } = {}) {
   let cameraConstraints = null;
   const track = { stop() { stopped += 1; }, addEventListener() {} };
   const stream = { getTracks: () => [track], getVideoTracks: () => [track] };
-  const detector = { close() { closed += 1; } };
+  const detector = { close() { closed += 1; }, detectForVideo() { return { landmarks: [] }; } };
   const context2d = new Proxy({}, { get: (_, key) => key.startsWith('create') ? () => ({ addColorStop() {} }) : () => {} });
   function element(id) {
     if (elements.has(id)) return elements.get(id);
@@ -113,14 +113,15 @@ test('a detector resolving after cancel is closed and cannot restore calibration
   assert.equal(app.state.detectorReady, false);
 });
 
-test('calibration requires consecutive detections and camera start initializes the complete game', async () => {
+test('calibration tolerates a missed pose frame and camera start initializes the complete game', async () => {
   const app = harness();
   await app.startCamera();
-  for (let i = 0; i < 8; i++) { app.tick(150); app.handlePose({ ...pose }); }
+  for (let i = 0; i < 6; i++) { app.tick(150); app.handlePose({ ...pose }); }
+  const samplesBeforeDrop = app.state.calibrationSamples.length;
+  app.tick(150);
   app.handlePose(null);
-  for (let i = 0; i < 8; i++) { app.tick(150); app.handlePose({ ...pose }); }
-  assert.equal(app.state.phase, 'calibrating');
-  app.calibrate();
+  assert.equal(app.state.calibrationSamples.length, samplesBeforeDrop);
+  for (let i = 0; i < 3; i++) { app.tick(150); app.handlePose({ ...pose }); }
   assert.equal(app.state.phase, 'ready');
   app.state.score = 123;
   app.state.gameTime = 8;
@@ -132,6 +133,16 @@ test('calibration requires consecutive detections and camera start initializes t
   app.failCamera('Cámara desconectada');
   assert.equal(app.timers.size, 0);
   assert.equal(app.ui.cameraError.classList.contains('hidden'), false);
+});
+
+test('calibration reports a missing pose even when the camera produces no usable landmarks', async () => {
+  const app = harness();
+  await app.startCamera();
+  app.tick(10001);
+  app.updateFrame(11001);
+  assert.equal(app.state.phase, 'calibrating');
+  assert.equal(app.ui.calibrationLabel.textContent, 'NO ENCONTRAMOS TU POSE');
+  assert.match(app.ui.calibrationHint.textContent, /encuadre vertical/);
 });
 
 test('camera restart after game over resets score, lives, streak and dance chart', async () => {
