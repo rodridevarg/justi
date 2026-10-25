@@ -43,7 +43,7 @@ function harness({ permission, detectorLoader } = {}) {
     __deps: { loadPoseDetector: detectorLoader ?? (async () => detector) },
   };
   vm.createContext(sandbox);
-  vm.runInContext(source.replace(/^import[^\n]+\n/, 'const { loadPoseDetector } = globalThis.__deps;\n') + '\nglobalThis.app = {state, ui, startCamera, backToHome, handlePose, beginGame, failCamera, updateGame, updateFrame, updatePlayerFromPose, handleCollision, endGame};', sandbox);
+  vm.runInContext(source.replace(/^import[^\n]+\n/, 'const { loadPoseDetector } = globalThis.__deps;\n') + '\nglobalThis.app = {state, ui, startCamera, backToHome, handlePose, beginGame, failCamera, updateGame, updateFrame, updatePlayerFromPose, hitDanceAction, buildDanceChart, extractBody, endGame};', sandbox);
   const app = sandbox.app;
   const calibrate = () => {
     for (let i = 0; i < 15; i++) { time += 150; app.handlePose({ ...pose }); }
@@ -114,16 +114,17 @@ test('calibration requires consecutive detections and camera start initializes t
   assert.equal(app.ui.cameraError.classList.contains('hidden'), false);
 });
 
-test('camera restart after game over resets score, lives and obstacles', async () => {
+test('camera restart after game over resets score, lives, streak and dance chart', async () => {
   const app = harness();
   await app.startCamera(); app.calibrate();
   app.state.phase = 'over'; app.state.lives = 0; app.state.score = 900;
-  app.state.obstacles = [{}];
+  app.state.notes = [{ action: 'left', time: 1, lane: 0, judged: false }];
   app.beginGame('camera');
   assert.equal(app.state.phase, 'countdown');
   assert.equal(app.state.lives, 3);
   assert.equal(app.state.score, 0);
-  assert.equal(app.state.obstacles.length, 0);
+  assert.equal(app.state.notes.length, 48);
+  assert.equal(app.state.combo, 0);
 });
 
 test('starting with stale tracking recalibrates instead of starting a blind game', async () => {
@@ -134,28 +135,72 @@ test('starting with stale tracking recalibrates instead of starting a blind game
   assert.equal(app.timers.size, 0);
 });
 
-test('mirrored lateral motion and crouching control the player after calibration', async () => {
+test('mirrored lateral motion and crouching create dance steps after calibration', async () => {
   const app = harness();
   await app.startCamera(); app.calibrate(); app.beginGame('camera');
+  app.state.phase = 'playing';
+  app.state.gameTime = app.state.notes.find((note) => note.action === 'right').time;
   app.updatePlayerFromPose({ ...pose, shoulderX: 0.3 });
   assert.equal(app.state.targetLane, 2);
+  assert.equal(app.state.hits, 1);
+  app.state.gameTime = app.state.notes.find((note) => note.action === 'down').time;
   for (let i = 0; i < 2; i++) app.updatePlayerFromPose({ ...pose, shoulderY: 0.45, hipY: 0.7 });
   assert.equal(app.state.isDucking, true);
+  assert.equal(app.state.hits, 2);
   for (let i = 0; i < 3; i++) app.updatePlayerFromPose(pose);
   assert.equal(app.state.isDucking, false);
 });
 
-test('crouching clears beams, crates cost a life, and a completed round ends at 30 seconds', () => {
+test('dance chart hits award perfect and good scores inside their timing windows', () => {
   const app = harness();
-  app.state.phase = 'playing'; app.state.playerPosition = 0; app.state.isDucking = true;
-  app.handleCollision({ kind: 'beam', lane: 1 });
-  assert.equal(app.state.lives, 3); assert.equal(app.state.dodges, 1);
-  app.handleCollision({ kind: 'crate', lane: 1 });
-  assert.equal(app.state.lives, 2);
+  app.state.phase = 'playing'; app.state.notes = app.buildDanceChart();
+  const perfect = app.state.notes[0]; app.state.gameTime = perfect.time + 0.08;
+  assert.equal(app.hitDanceAction(perfect.action), true);
+  assert.equal(app.state.score, 100); assert.equal(app.state.combo, 1);
+  const good = app.state.notes.find((note) => !note.judged);
+  app.state.gameTime = good.time + 0.28;
+  assert.equal(app.hitDanceAction(good.action), true);
+  assert.equal(app.state.score, 160); assert.equal(app.state.combo, 2);
+  assert.equal(app.state.bestCombo, 2);
+});
+
+test('a completed 30-second dance round ends with the success result', () => {
+  const app = harness();
+  app.state.phase = 'playing'; app.state.notes = app.buildDanceChart();
+  for (let i = 0; i < 3; i++) app.state.notes[i].judged = true;
+  app.state.misses = 3; app.state.missStreak = 0;
+  app.state.notes = [];
   app.state.nextObstacleAt = Infinity;
   app.state.gameTime = 29.98;
   app.updateGame(0.05);
   assert.equal(app.state.phase, 'over'); assert.equal(app.state.finishedByTime, true);
+});
+
+test('a late note consumes a life only after three consecutive misses', () => {
+  const app = harness();
+  app.state.phase = 'playing';
+  app.state.notes = [0, 1, 2].map((index) => ({ action: 'left', lane: 0, time: index + 1, judged: false }));
+  app.state.gameTime = 4;
+  app.updateGame(0.01);
+  assert.equal(app.state.misses, 3);
+  assert.equal(app.state.lives, 2);
+  assert.equal(app.state.phase, 'playing');
+});
+
+test('both raised wrists are recognized as an up step', async () => {
+  const app = harness();
+  const landmarks = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 1 }));
+  landmarks[11] = { x: 0.4, y: 0.3, visibility: 1 }; landmarks[12] = { x: 0.6, y: 0.3, visibility: 1 };
+  landmarks[23] = { x: 0.43, y: 0.6, visibility: 1 }; landmarks[24] = { x: 0.57, y: 0.6, visibility: 1 };
+  landmarks[15].y = 0.15; landmarks[16].y = 0.15;
+  assert.equal(app.extractBody(landmarks).armsRaised, true);
+  app.state.phase = 'playing'; app.state.baseline = { mirroredX: 0.5, shoulderY: 0.3, hipY: 0.6, torsoScale: 0.3, laneThreshold: 0.12 };
+  app.state.notes = app.buildDanceChart();
+  app.state.gameTime = app.state.notes.find((note) => note.action === 'up').time;
+  app.updatePlayerFromPose(app.extractBody(landmarks));
+  app.updatePlayerFromPose(app.extractBody(landmarks));
+  assert.equal(app.state.hits, 1);
+  assert.equal(app.state.activePad, 'up');
 });
 
 test('slow rendering counts the full elapsed time toward the 30-second round', () => {

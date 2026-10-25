@@ -4,30 +4,30 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#090b12" />
-    <meta name="description" content="Esquivá los obstáculos con el cuerpo. Un juego gratuito que corre en tu navegador." />
-    <title>Body Dodge — Tu cuerpo, tu joystick</title>
+    <meta name="description" content="Bailá al ritmo: pisá las flechas con el cuerpo y convertí tu cámara en una pista de baile." />
+    <title>Body Beat — Tu cuerpo es el joystick</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800;900&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=0.1.1" />
+    <link rel="stylesheet" href="./styles.css?v=0.2.0" />
   </head>
   <body>
     <div class="page-wrap">
       <header class="topbar">
-        <a class="brand" href="./" aria-label="Body Dodge, inicio"><span class="brand-mark">B<span>!</span></span><span class="brand-name">BODY<span>DODGE</span></span></a>
-        <a class="header-note" href="#how-to-play"><span class="sparkle">✳</span> UN JUEGO PARA MOVERTE <span class="tag-mini">V0.1</span></a>
+        <a class="brand" href="./" aria-label="Body Beat, inicio"><span class="brand-mark">B<span>!</span></span><span class="brand-name">BODY<span>BEAT</span></span></a>
+        <a class="header-note" href="#how-to-play"><span class="sparkle">✳</span> TU CUERPO MARCA EL RITMO <span class="tag-mini">V0.2</span></a>
         <a class="github-link" href="https://github.com/rodridevarg/justi" target="_blank" rel="noreferrer">ABIERTO EN GITHUB <span aria-hidden="true">↗</span></a>
       </header>
 
       <main class="layout">
-        <section class="game-column" aria-label="Partida de Body Dodge">
-          <div class="game-heading"><p class="eyebrow"><span class="live-dot"></span> REFLEJOS ACTIVADOS</p><h1>QUE NO TE <span>ATRAPEN.</span></h1></div>
+        <section class="game-column" aria-label="Partida de Body Beat">
+          <div class="game-heading"><p class="eyebrow"><span class="live-dot"></span> PISTA ABIERTA · 103 BPM</p><h1>SEGUÍ EL <span>BEAT.</span></h1></div>
 
           <div id="cameraError" class="camera-alert hidden" role="alert" aria-live="assertive"><strong>No pudimos activar el juego con cámara</strong><p id="cameraErrorMessage"></p></div>
           <div class="game-frame" id="gameFrame">
-            <div class="game-topline"><span class="game-brand">BODY <b>DODGE</b></span><span class="game-wave" id="gameWave">RONDA <b>01</b></span><button class="icon-button" id="muteBtn" type="button" aria-label="Activar o desactivar sonido" title="Sonido">♪</button></div>
-            <canvas id="gameCanvas" width="960" height="600" role="img" aria-label="Pista futurista de juego con tres carriles y un personaje"></canvas>
+            <div class="game-topline"><span class="game-brand">BODY <b>BEAT</b></span><span class="game-wave" id="gameWave">RACHA <b>0</b></span><button class="icon-button" id="muteBtn" type="button" aria-label="Activar o desactivar sonido" title="Sonido">♪</button></div>
+            <canvas id="gameCanvas" width="960" height="600" role="img" aria-label="Pista de baile con cuatro carriles de flechas al ritmo"></canvas>
 
             <div class="hud" id="gameHud" aria-live="polite">
               <div class="hearts" id="hearts" aria-label="Tres vidas"><span class="heart">♥</span><span class="heart">♥</span><span class="heart">♥</span></div>
@@ -35,11 +35,11 @@
               <div class="timer-block"><div class="timer-head"><span class="hud-label">TIEMPO</span><span class="timer-value" id="timerValue">00:30</span></div><div class="timer-track"><div class="timer-fill" id="timerFill"></div></div></div>
             </div>
 
-            <div class="lane-caption lane-left">IZQ</div><div class="lane-caption lane-center">CENTRO</div><div class="lane-caption lane-right">DER</div>
+            <div class="lane-caption lane-left">←</div><div class="lane-caption lane-up">↑</div><div class="lane-caption lane-down">↓</div><div class="lane-caption lane-right">→</div>
 
             <div class="screen-overlay" id="startOverlay">
-              <div class="overlay-card intro-card"><div class="pretitle"><span class="pill-icon">↔</span> TU CUERPO ES EL JOYSTICK</div><h2>UN PASO.<br /><span>UN DODGE.</span></h2><p>Movete para cambiar de carril. Agachate para pasar debajo. ¿Cuánto aguantás?</p>
-                <div class="start-actions"><button class="button button-primary" id="cameraStart" type="button"><span class="camera-icon" aria-hidden="true">◎</span> JUGAR CON CÁMARA <span class="button-arrow">→</span></button><button class="button button-ghost" id="manualStart" type="button"><span aria-hidden="true">⌨</span> PROBAR CON TECLADO</button></div>
+              <div class="overlay-card intro-card"><div class="pretitle"><span class="pill-icon">♫</span> TU CUERPO ES EL JOYSTICK</div><h2>¡A PISAR<br /><span>AL RITMO!</span></h2><p>Seguí las flechas que caen: movete a los costados, levantá los brazos o agachate justo cuando llegan al piso.</p>
+                <div class="start-actions"><button class="button button-primary" id="cameraStart" type="button"><span class="camera-icon" aria-hidden="true">◎</span> BAILAR CON CÁMARA <span class="button-arrow">→</span></button><button class="button button-ghost" id="manualStart" type="button"><span aria-hidden="true">⌨</span> PROBAR SIN CÁMARA</button></div>
                 <span class="overlay-footnote">SIN CUENTAS · SIN INSTALAR NADA</span>
               </div>
             </div>
@@ -62,21 +62,21 @@
           <div class="game-toolbar"><div class="lane-status"><span class="status-pip" id="lanePip"></span><span id="controlStatus">ELEGÍ UN MODO PARA EMPEZAR</span></div><div class="game-buttons"><button class="toolbar-button" id="fullscreenBtn" type="button"><span aria-hidden="true">⛶</span> PANTALLA COMPLETA</button><button class="toolbar-button" id="pauseButton" type="button" disabled>Ⅱ <span class="desktop-pause-label">PAUSA</span></button></div></div>
 
           <div class="manual-panel hidden" id="manualPanel" aria-label="Controles manuales">
-            <span class="manual-label">CONTROLES</span><button class="control-arrow" id="leftControl" type="button" aria-label="Mover al carril izquierdo">←</button><button class="control-duck" id="duckControl" type="button"><span aria-hidden="true">↓</span> AGACHARSE</button><button class="control-arrow" id="rightControl" type="button" aria-label="Mover al carril derecho">→</button><span class="manual-hint">O USA A · D · ESPACIO</span>
+            <span class="manual-label">CONTROLES</span><button class="control-arrow" id="leftControl" type="button" aria-label="Pisar izquierda">←</button><button class="control-arrow" id="upControl" type="button" aria-label="Pisar arriba">↑</button><button class="control-duck" id="duckControl" type="button" aria-label="Pisar abajo"><span aria-hidden="true">↓</span></button><button class="control-arrow" id="rightControl" type="button" aria-label="Pisar derecha">→</button><span class="manual-hint">FLECHAS · WASD</span>
           </div>
         </section>
 
         <aside class="side-column">
           <section class="camera-card" id="cameraCard"><div class="side-card-head"><div><p class="side-eyebrow">TU CÁMARA</p><h2>EL CONTROL<br />SOS VOS.</h2></div><span class="camera-state" id="cameraState"><span class="state-dot"></span> EN ESPERA</span></div><div class="camera-preview" id="cameraPreview"><video id="cameraVideo" playsinline autoplay muted aria-label="Vista previa de cámara"></video><canvas id="poseCanvas" width="640" height="480" aria-hidden="true"></canvas><div class="camera-placeholder" id="cameraPlaceholder"><div class="placeholder-frame"><span>◉</span></div><span>TU IMAGEN APARECE ACÁ</span></div><div class="camera-rec hidden" id="cameraRec"><span></span> CÁMARA ACTIVA</div><div class="tracking-indicator" id="trackingIndicator"><span></span> <b id="trackingLabel">ESPERANDO</b></div></div><div class="camera-foot"><span class="privacy-icon">◈</span><p>La imagen se procesa de forma segura en tu dispositivo.</p></div></section>
 
-          <section class="howto-card" id="how-to-play"><p class="side-eyebrow">ASÍ SE JUEGA</p><h2>MOVETE<br />Y <span>ESQUIVÁ.</span></h2><div class="move-row"><div class="move-icon horizontal-icon"><span>←</span><span>→</span></div><div><strong>CAMBIÁ DE CARRIL</strong><p>Mové los hombros a un costado.</p></div></div><div class="move-row"><div class="move-icon duck-icon"><span>↓</span></div><div><strong>AGACHATE</strong><p>Flexioná las rodillas a tiempo.</p></div></div><div class="mode-tip"><span class="tip-star">✳</span><p>¿Sin cámara? Jugá con los <b>controles de abajo</b> o con el teclado.</p></div></section>
+          <section class="howto-card" id="how-to-play"><p class="side-eyebrow">ASÍ SE JUEGA</p><h2>BAILÁ AL<br /><span>RITMO.</span></h2><div class="move-row"><div class="move-icon horizontal-icon"><span>←</span><span>→</span></div><div><strong>PASOS LATERALES</strong><p>Mové el torso a izquierda o derecha.</p></div></div><div class="move-row"><div class="move-icon duck-icon"><span>↑ ↓</span></div><div><strong>BRAZOS Y AGACHE</strong><p>Alzá las manos o flexioná las rodillas.</p></div></div><div class="mode-tip"><span class="tip-star">✳</span><p>Pisá cada flecha cuando llega a la línea. ¿Sin cámara? Usá <b>controles o teclado</b>.</p></div></section>
 
           <section class="tiny-note"><span>BUENAS PRIMERAS PARTIDAS</span><div><span class="note-star">✳</span> Esta pista es toda tuya.</div></section>
         </aside>
       </main>
-      <footer class="footer"><span>HECHO PARA JUGAR Y MOVERSE</span><span>BODY DODGE <b>✳</b> 2026</span></footer>
+      <footer class="footer"><span>HECHO PARA JUGAR Y BAILAR</span><span>BODY BEAT <b>✳</b> 2026</span></footer>
     </div>
-    <script type="module" src="./game.js?v=0.1.1"></script>
+    <script type="module" src="./game.js?v=0.2.0"></script>
   </body>
 </html>
 

@@ -1,7 +1,17 @@
-import { loadPoseDetector } from './pose-detector.mjs?v=0.1.1';
+import { loadPoseDetector } from './pose-detector.mjs?v=0.2.0';
 
 const WORLD = { width: 960, height: 600, horizon: 155, finishLine: 0.96 };
 const LANE_OFFSET = [-1, 0, 1];
+const DANCE_BPM = 103;
+const BEAT = 60 / DANCE_BPM;
+const NOTE_TRAVEL = 1.65;
+const PERFECT_WINDOW = 0.17;
+const GOOD_WINDOW = 0.38;
+const ACTIONS = ['left', 'down', 'up', 'right'];
+const ACTION_LABELS = { left: 'IZQUIERDA', down: 'ABAJO', up: 'ARRIBA', right: 'DERECHA' };
+const ACTION_GLYPHS = { left: '←', down: '↓', up: '↑', right: '→' };
+const ACTION_COLORS = { left: '#69d9ff', down: '#c3f66b', up: '#ffcf65', right: '#ff6cae' };
+const DANCE_CHART = ['left', 'right', 'up', 'down', 'left', 'down', 'right', 'up', 'down', 'left', 'up', 'right', 'left', 'down', 'up', 'right'];
 const ELEMENTS = [
   'gameCanvas', 'gameFrame', 'gameWave', 'scoreValue', 'timerValue', 'timerFill', 'hearts',
   'startOverlay', 'calibrationOverlay', 'pauseOverlay', 'gameOverOverlay', 'countdownOverlay',
@@ -10,7 +20,7 @@ const ELEMENTS = [
   'gameOverEyebrow', 'gameOverTitle', 'gameOverText', 'finalScore', 'restartButton', 'gameOverHome',
   'countdownNumber', 'cameraStart', 'manualStart', 'cameraVideo', 'poseCanvas', 'cameraPlaceholder',
   'cameraRec', 'trackingIndicator', 'trackingLabel', 'cameraCard', 'cameraState', 'controlStatus',
-  'lanePip', 'pauseButton', 'manualPanel', 'leftControl', 'rightControl', 'duckControl',
+  'lanePip', 'pauseButton', 'manualPanel', 'leftControl', 'rightControl', 'duckControl', 'upControl',
   'fullscreenBtn', 'muteBtn', 'gameHud', 'cameraError', 'cameraErrorMessage',
 ];
 const ui = Object.fromEntries(ELEMENTS.map((id) => [id, document.getElementById(id)]));
@@ -24,10 +34,10 @@ const state = {
   phase: 'idle', mode: null, stream: null, detectorReady: false,
   gameTime: 0, clock: 0, previousFrame: 0, lastDetectionAt: 0,
   lastVideoTime: -1, lastBodyAt: 0, playerLane: 1, targetLane: 1, playerPosition: 0, isDucking: false,
-  lives: 3, score: 0, combo: 0, dodges: 0, obstacles: [], nextObstacleAt: 0,
-  effects: [], stars: [], shake: 0, muted: true, audio: null,
+  lives: 3, score: 0, combo: 0, bestCombo: 0, hits: 0, misses: 0, notes: [], activePad: null,
+  effects: [], stars: [], shake: 0, muted: false, audio: null,
   calibrationSamples: [], calibrationStarted: 0, calibrationWaitStarted: 0, baseline: null, calibrationHold: false,
-  body: null, highStreak: 0, lowStreak: 0, lastLaneSignal: 0,
+  body: null, highStreak: 0, lowStreak: 0, armStreak: 0, missStreak: 0, bodyAction: null,
   cameraError: '', cameraSession: 0, finishedByTime: false, detector: null,
 };
 
@@ -118,11 +128,12 @@ function updatePlayerFromPose(body) {
   if (state.highStreak >= 2) state.isDucking = true;
   if (state.lowStreak >= 3) state.isDucking = false;
 
-  if (state.targetLane !== state.playerLane && state.lastLaneSignal !== state.targetLane) {
-    state.lastLaneSignal = state.targetLane;
-    if (state.phase === 'playing') addPop(`CARRIL ${['IZQ', 'CENTRO', 'DER'][state.targetLane]}`, state.targetLane, '#c5f66a');
-  }
-  if (state.targetLane === state.playerLane) state.lastLaneSignal = state.playerLane;
+  state.armStreak = body.armsRaised ? Math.min(5, state.armStreak + 1) : 0;
+  const action = state.highStreak >= 2 ? 'down'
+    : state.armStreak >= 2 ? 'up'
+      : steps < 0 ? 'left' : steps > 0 ? 'right' : null;
+  if (action && action !== state.bodyAction && state.phase === 'playing') hitDanceAction(action);
+  state.bodyAction = action;
 }
 
 function makeBaseline(samples) {
@@ -422,9 +433,62 @@ function drawEffects(dt) {
 function drawScene(time, dt) {
   if (MOTION_REDUCED.matches) time *= 0.25;
   drawBackground(time);
-  for (const obstacle of [...state.obstacles].sort((a, b) => a.depth - b.depth)) drawBlock(obstacle);
-  drawRunner(time);
+  drawDanceTrack();
   drawEffects(dt);
+}
+
+function drawDanceTrack() {
+  const topY = WORLD.horizon + 24;
+  const hitY = 505;
+  const topLeft = 176, topWidth = 608, bottomLeft = 58, bottomWidth = 844;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(topLeft, topY); ctx.lineTo(topLeft + topWidth, topY);
+  ctx.lineTo(bottomLeft + bottomWidth, hitY + 35); ctx.lineTo(bottomLeft, hitY + 35);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(12, 9, 22, .94)'; ctx.fill();
+  for (let lane = 0; lane < 4; lane += 1) {
+    const color = ACTION_COLORS[ACTIONS[lane]];
+    const xTop = topLeft + lane * topWidth / 4;
+    const xBottom = bottomLeft + lane * bottomWidth / 4;
+    ctx.beginPath();
+    ctx.moveTo(xTop, topY); ctx.lineTo(xTop + topWidth / 4, topY);
+    ctx.lineTo(xBottom + bottomWidth / 4, hitY + 35); ctx.lineTo(xBottom, hitY + 35);
+    ctx.closePath();
+    ctx.fillStyle = lane % 2 ? 'rgba(34, 23, 48, .88)' : 'rgba(23, 18, 38, .9)'; ctx.fill();
+    ctx.strokeStyle = `${color}55`; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(xTop, topY); ctx.lineTo(xBottom, hitY + 35); ctx.stroke();
+    const padX = xBottom + bottomWidth / 8;
+    ctx.save();
+    ctx.shadowColor = color; ctx.shadowBlur = state.activePad === ACTIONS[lane] ? 24 : 9;
+    ctx.fillStyle = state.activePad === ACTIONS[lane] ? `${color}66` : `${color}20`;
+    roundRect(padX - 72, hitY - 25, 144, 56, 10); ctx.fill();
+    ctx.strokeStyle = `${color}${state.activePad === ACTIONS[lane] ? 'ff' : '99'}`; ctx.lineWidth = 2; ctx.stroke();
+    ctx.shadowBlur = 0; ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = '800 30px "DM Sans", sans-serif'; ctx.fillText(ACTION_GLYPHS[ACTIONS[lane]], padX, hitY + 2);
+    ctx.restore();
+  }
+  ctx.strokeStyle = '#f6e6ff'; ctx.lineWidth = 2; ctx.shadowColor = '#ff49a3'; ctx.shadowBlur = 13;
+  ctx.beginPath(); ctx.moveTo(bottomLeft, hitY - 31); ctx.lineTo(bottomLeft + bottomWidth, hitY - 31); ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#f3d9ff'; ctx.font = '700 13px "Barlow Condensed", sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('¡PISÁ AL RITMO!', WORLD.width / 2, 155);
+  for (const note of state.notes) {
+    if (note.judged) continue;
+    const progress = 1 - (note.time - state.gameTime) / NOTE_TRAVEL;
+    if (progress < 0 || progress > 1.08) continue;
+    const y = topY + progress * (hitY - topY - 34);
+    const x = 58 + (note.lane + 0.5) * 844 / 4;
+    const width = 50 + progress * 45;
+    const height = 26 + progress * 24;
+    const color = ACTION_COLORS[note.action];
+    ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 12;
+    ctx.fillStyle = color; roundRect(x - width / 2, y - height / 2, width, height, 7); ctx.fill();
+    ctx.shadowBlur = 0; ctx.fillStyle = '#17121f'; ctx.font = `900 ${Math.round(22 + progress * 6)}px "DM Sans", sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(ACTION_GLYPHS[note.action], x, y);
+    ctx.restore();
+  }
+  ctx.restore();
 }
 
 function createStars() {
@@ -434,19 +498,55 @@ function createStars() {
 }
 
 function addPop(text, lane, color) {
-  const projection = getProjection(LANE_OFFSET[lane], 0.93);
-  state.effects.push({ text, x: projection.x, y: projection.y - 78, color, life: 0.7, duration: 0.7 });
+  state.effects.push({ text, x: WORLD.width / 2, y: 282, color, life: 0.7, duration: 0.7 });
 }
 
-function addObstacle() {
-  if (state.obstacles.length > 3) return;
-  const level = Math.floor(state.gameTime / 12);
-  const difficulty = Math.min(0.45, level * 0.13);
-  const random = Math.random();
-  let kind = random < 0.32 + difficulty * 0.3 ? 'beam' : 'crate';
-  if (state.gameTime < 5) kind = 'crate';
-  state.obstacles.push({ kind, lane: Math.floor(Math.random() * 3), depth: 0, resolved: false, seed: Math.random() });
-  state.nextObstacleAt = state.clock + Math.max(1.25, 1.76 - level * 0.08 + rand(-0.16, 0.16));
+function buildDanceChart() {
+  const notes = [];
+  for (let index = 0, time = 2.25; time < 30; index += 1, time += BEAT) {
+    const action = DANCE_CHART[index % DANCE_CHART.length];
+    notes.push({ action, lane: ACTIONS.indexOf(action), time, judged: false });
+  }
+  return notes;
+}
+
+function hitDanceAction(action) {
+  if (state.phase !== 'playing') return false;
+  state.activePad = action;
+  const note = state.notes.filter((item) => !item.judged && item.action === action)
+    .sort((a, b) => Math.abs(a.time - state.gameTime) - Math.abs(b.time - state.gameTime))[0];
+  if (!note || Math.abs(note.time - state.gameTime) > GOOD_WINDOW) {
+    addPop(note ? '¡MÁS CERCA DEL RITMO!' : '¡SEGUÍ EL RITMO!', 0, '#ffb45e');
+    return false;
+  }
+  note.judged = true;
+  const perfect = Math.abs(note.time - state.gameTime) <= PERFECT_WINDOW;
+  state.hits += 1;
+  state.missStreak = 0;
+  state.combo += 1;
+  state.bestCombo = Math.max(state.bestCombo, state.combo);
+  state.score += perfect ? 100 : 60;
+  addPop(perfect ? `¡PERFECT! ${state.combo}×` : `¡BIEN! ${state.combo}×`, note.lane, perfect ? ACTION_COLORS[action] : '#c3f66b');
+  if (!state.muted) playChime();
+  ui.gameWave.innerHTML = `RACHA <b>${state.combo}</b>`;
+  return true;
+}
+
+function missDanceNote(note) {
+  note.judged = true;
+  state.misses += 1;
+  state.missStreak += 1;
+  state.combo = 0;
+  if (state.missStreak >= 3) {
+    state.missStreak = 0;
+    state.lives -= 1;
+    addPop('¡VIDA MENOS!', note.lane, '#ff607f');
+    renderLives();
+    if (!state.muted) playChime(true);
+    if (state.lives <= 0) endGame(false);
+  } else {
+    addPop('¡SE ESCAPÓ!', note.lane, '#ffb45e');
+  }
 }
 
 function updateHUD() {
@@ -456,48 +556,22 @@ function updateHUD() {
   ui.timerValue.textContent = `00:${String(totalSeconds).padStart(2, '0')}`;
   ui.timerFill.style.width = `${(remaining / 30) * 100}%`;
   ui.timerFill.classList.toggle('is-low', remaining <= 8);
-  ui.gameWave.innerHTML = `RONDA <b>${String(Math.floor(state.gameTime / 10) + 1).padStart(2, '0')}</b>`;
-}
-
-function handleCollision(obstacle) {
-  if (obstacle.resolved) return;
-  obstacle.resolved = true;
-  const currentlyInLane = Math.abs(state.playerPosition - LANE_OFFSET[obstacle.lane]) < 0.44;
-  const duckedInTime = obstacle.kind === 'beam' && state.isDucking;
-  if (!currentlyInLane || duckedInTime) {
-    state.dodges += 1;
-    state.combo += 1;
-    state.score += 100 + Math.min(200, Math.max(0, state.combo - 1) * 20);
-    addPop(state.combo > 1 ? `+100 · ${state.combo}×` : '+100 · DODGE', obstacle.lane, '#c3f66b');
-    if (!state.muted && state.combo % 4 === 0) playChime();
-  } else {
-    state.lives -= 1;
-    state.combo = 0;
-    state.shake = 0.35;
-    ui.gameFrame.classList.remove('is-damaged');
-    void ui.gameFrame.offsetWidth;
-    ui.gameFrame.classList.add('is-damaged');
-    addPop('¡AUCH!', obstacle.lane, '#ff607f');
-    renderLives();
-    if (!state.muted) playChime(true);
-    if (state.lives <= 0) endGame(false);
-  }
+  ui.gameWave.innerHTML = `RACHA <b>${state.combo}</b>`;
 }
 
 function updateGame(dt) {
   if (state.phase !== 'playing') return;
   state.gameTime = Math.min(30, state.gameTime + dt);
-  state.score += dt * 8;
-  const speed = 0.37 + Math.floor(state.gameTime / 10) * 0.025;
-  state.playerPosition = mix(state.playerPosition, LANE_OFFSET[state.targetLane], Math.min(1, dt * 8));
   state.shake = Math.max(0, state.shake - dt);
-
-  if (state.clock >= state.nextObstacleAt) addObstacle();
-  for (const obstacle of state.obstacles) {
-    obstacle.depth += speed * dt * (1 + obstacle.seed * 0.07);
-    if (!obstacle.resolved && obstacle.depth >= WORLD.finishLine) handleCollision(obstacle);
+  state.activePad = null;
+  if (!state.muted && state.gameTime >= state.nextBeatAt) {
+    playBeatTick();
+    state.nextBeatAt += BEAT;
   }
-  state.obstacles = state.obstacles.filter((obstacle) => obstacle.depth < 1.09);
+  for (const note of state.notes) {
+    if (state.phase !== 'playing') break;
+    if (!note.judged && state.gameTime > note.time + GOOD_WINDOW) missDanceNote(note);
+  }
   updateHUD();
 
   if (state.gameTime >= 30 && state.phase === 'playing') endGame(true);
@@ -582,12 +656,12 @@ function progressCalibration() {
     ui.manualStart.style.opacity = '';
     ui.cameraStart.style.cursor = '';
     setCameraState('LISTA', true);
-    setControlStatus('CÁMARA LISTA · MOVETE PARA ESQUIVAR', 'active');
+    setControlStatus('CÁMARA LISTA · BAILÁ AL RITMO', 'active');
     setOverlay('startOverlay');
     ui.startOverlay.querySelector('.pretitle').innerHTML = '<span class="pill-icon">✳</span> YA ESTÁS EN LA PISTA';
     ui.startOverlay.querySelector('h2').innerHTML = 'TU CUERPO.<br /><span>TU JUEGO.</span>';
     ui.startOverlay.querySelector('p').textContent = 'La cámara te sigue. Arrancá cuando estés listo.';
-    ui.cameraStart.innerHTML = '<span class="camera-icon" aria-hidden="true">◎</span> EMPEZAR PARTIDA <span class="button-arrow">→</span>';
+    ui.cameraStart.innerHTML = '<span class="camera-icon" aria-hidden="true">◎</span> EMPEZAR BAILE <span class="button-arrow">→</span>';
     ui.manualStart.textContent = 'CAMBIAR A CONTROLES MANUALES';
   } else if (now - state.calibrationWaitStarted > 10000 && !enoughSamples) {
     ui.calibrationIcon.textContent = '↗';
@@ -616,13 +690,16 @@ function handlePose(body) {
     if (state.phase === 'paused' && ui.pauseEyebrow.textContent === 'TE PERDIMOS DE VISTA') {
       ui.pauseEyebrow.textContent = 'CÁMARA ACTIVA';
       ui.pauseTitle.innerHTML = 'YA VOLVISTE.<br /><span>¡SEGUÍ!</span>';
-      ui.pauseHint.textContent = 'Te encontramos de nuevo. Tocá el botón y esquivá el próximo obstáculo.';
+      ui.pauseHint.textContent = 'Te encontramos de nuevo. Tocá el botón y seguí el ritmo.';
       ui.resumeButton.disabled = false;
       ui.resumeButton.style.opacity = '';
       setControlStatus('CÁMARA ACTIVA · PODÉS SEGUIR', 'active');
     }
   } else {
     state.body = null;
+    state.bodyAction = null;
+    state.highStreak = 0;
+    state.armStreak = 0;
     state.calibrationSamples = [];
     state.calibrationStarted = 0;
     setTracking(false);
@@ -641,6 +718,7 @@ function extractBody(landmarks) {
     hipY: (lh.y + rh.y) / 2,
     shoulderWidth: Math.abs(ls.x - rs.x),
     torsoScale: Math.max(0.08, Math.abs((lh.y + rh.y - ls.y - rs.y) / 2)),
+    armsRaised: [15, 16].every(visible) && landmarks[15].y < ls.y - 0.035 && landmarks[16].y < rs.y - 0.035,
     outline: [11, 12, 14, 16, 24, 23, 25, 27].map((i) =>
       visible(landmarks[i]) ? { x: landmarks[i].x, y: landmarks[i].y } : null),
   };
@@ -710,9 +788,9 @@ async function startCamera() {
   const session = ++state.cameraSession;
   state.mode = 'camera';
   state.phase = 'loading';
-  ui.startOverlay.querySelector('.pretitle').innerHTML = '<span class="pill-icon">↔</span> TU CUERPO ES EL JOYSTICK';
-  ui.startOverlay.querySelector('h2').innerHTML = 'UN PASO.<br /><span>UN DODGE.</span>';
-  ui.startOverlay.querySelector('p').textContent = 'Movete para cambiar de carril. Agachate para pasar debajo. ¿Cuánto aguantás?';
+  ui.startOverlay.querySelector('.pretitle').innerHTML = '<span class="pill-icon">♫</span> TU CUERPO ES EL JOYSTICK';
+  ui.startOverlay.querySelector('h2').innerHTML = '¡A PISAR<br /><span>AL RITMO!</span>';
+  ui.startOverlay.querySelector('p').textContent = 'Seguí las flechas: movete a los costados, levantá los brazos o agachate justo cuando llegan al piso.';
   ui.cameraStart.innerHTML = '<span class="camera-icon" aria-hidden="true">◎</span> JUGAR CON CÁMARA <span class="button-arrow">→</span>';
   ui.manualStart.innerHTML = '<span aria-hidden="true">⌨</span> PROBAR CON TECLADO';
   setCameraState('CONECTANDO', true);
@@ -790,11 +868,11 @@ function failCamera(message) {
   state.phase = 'idle';
   state.mode = null;
   resetStartButtons();
-  ui.startOverlay.querySelector('.pretitle').innerHTML = '<span class="pill-icon">↔</span> TU CUERPO ES EL JOYSTICK';
-  ui.startOverlay.querySelector('h2').innerHTML = 'UN PASO.<br /><span>UN DODGE.</span>';
+  ui.startOverlay.querySelector('.pretitle').innerHTML = '<span class="pill-icon">♫</span> TU CUERPO ES EL JOYSTICK';
+  ui.startOverlay.querySelector('h2').innerHTML = '¡A PISAR<br /><span>AL RITMO!</span>';
   ui.startOverlay.querySelector('p').textContent = message;
   ui.cameraStart.innerHTML = '<span class="camera-icon" aria-hidden="true">◎</span> INTENTAR DE NUEVO <span class="button-arrow">→</span>';
-  ui.manualStart.innerHTML = '<span aria-hidden="true">⌨</span> PROBAR CON TECLADO';
+  ui.manualStart.innerHTML = '<span aria-hidden="true">⌨</span> PROBAR SIN CÁMARA';
   ui.cameraStart.style.display = '';
   ui.startOverlay.classList.remove('hidden');
   setCameraState('NO DISPONIBLE');
@@ -843,7 +921,7 @@ function beginGame(mode) {
     video.classList.remove('is-active');
     poseCtx.clearRect(0, 0, ui.poseCanvas.width, ui.poseCanvas.height);
     ui.manualPanel.classList.remove('hidden');
-    setControlStatus('FLECHAS O A · D · ESPACIO', 'active');
+    setControlStatus('SEGUÍ LAS FLECHAS · ← ↑ ↓ →', 'active');
   } else {
     if (!['ready', 'over'].includes(state.phase) || !state.detectorReady || !state.baseline) return;
     if (!state.body || performance.now() - state.lastBodyAt > 1000) {
@@ -852,21 +930,26 @@ function beginGame(mode) {
     }
     state.calibrationHold = false;
     ui.manualPanel.classList.add('hidden');
-    setControlStatus('CÁMARA LISTA · MOVETE PARA ESQUIVAR', 'active');
+    setControlStatus('CÁMARA LISTA · BAILÁ AL RITMO', 'active');
   }
 
   state.gameTime = 0;
   state.lives = 3;
   state.combo = 0;
-  state.dodges = 0;
+  state.bestCombo = 0;
+  state.hits = 0;
+  state.misses = 0;
+  state.missStreak = 0;
+  state.armStreak = 0;
   state.score = 0;
-  state.nextObstacleAt = state.clock + 1.2;
-  state.obstacles = [];
+  state.nextBeatAt = 0;
+  state.notes = buildDanceChart();
   state.effects = [];
   state.playerLane = 1;
   state.targetLane = 1;
   state.playerPosition = 0;
   state.isDucking = false;
+  state.bodyAction = null;
   state.finishedByTime = false;
   ui.gameHud.classList.remove('hidden');
   ui.pauseButton.disabled = false;
@@ -895,7 +978,7 @@ function startCountdown() {
       state.phase = 'playing';
       state.previousFrame = performance.now();
       setOverlay(null);
-      setControlStatus(state.mode === 'camera' ? 'CÁMARA ACTIVA · MOVETE PARA ESQUIVAR' : 'EN PARTIDA · ESQUIVÁ LOS OBSTÁCULOS', 'active');
+      setControlStatus(state.mode === 'camera' ? 'CÁMARA ACTIVA · BAILÁ AL RITMO' : 'EN PARTIDA · PISÁ LAS FLECHAS', 'active');
       return;
     }
     ui.countdownNumber.textContent = words[index];
@@ -914,11 +997,10 @@ function endGame(survived) {
   ui.pauseButton.disabled = true;
   ui.gameFrame.classList.remove('is-playing');
   ui.finalScore.textContent = padScore(state.score);
-  ui.gameOverEyebrow.textContent = survived ? '¡LO LOGRASTE!' : 'FIN DE LA PARTIDA';
-  ui.gameOverTitle.innerHTML = survived ? '¡30 SEGUNDOS!<br /><span>LO ESQUIVASTE.</span>' : 'BUEN<br /><span>INTENTO.</span>';
-  ui.gameOverText.textContent = survived
-    ? `Esquivaste ${state.dodges} obstáculo${state.dodges === 1 ? '' : 's'}. ¡Tu cuerpo ya es todo un joystick!`
-    : state.dodges >= 4 ? `Esquivaste ${state.dodges} obstáculos. Cada partida te hace más rápido.` : 'Los reflejos se entrenan. ¡Dale otra oportunidad!';
+  ui.gameOverEyebrow.textContent = survived ? '¡BAILASTE LOS 30 SEGUNDOS!' : 'FIN DE LA PARTIDA';
+  ui.gameOverTitle.innerHTML = survived ? '¡QUÉ<br /><span>RITMAZO!</span>' : 'BUEN<br /><span>INTENTO.</span>';
+  const accuracy = state.hits + state.misses ? Math.round(state.hits / (state.hits + state.misses) * 100) : 0;
+  ui.gameOverText.textContent = `${accuracy}% de precisión · mejor racha ${state.bestCombo}. ¡Otra ronda y rompés la pista!`;
   if (state.mode === 'camera') {
     setControlStatus(survived ? 'COMPLETASTE LOS 30 SEGUNDOS' : 'FIN DE LA PARTIDA', survived ? 'active' : 'warning');
   } else {
@@ -979,12 +1061,13 @@ function backToHome() {
   state.gameTime = 0;
   state.lives = 3;
   state.score = 0;
-  state.obstacles = [];
+  state.notes = [];
   state.effects = [];
   state.targetLane = 1;
   state.playerLane = 1;
   state.playerPosition = 0;
   state.isDucking = false;
+  state.bodyAction = null;
   state.calibrationHold = false;
   ui.pauseButton.disabled = true;
   ui.manualPanel.classList.add('hidden');
@@ -994,11 +1077,11 @@ function backToHome() {
   video.classList.remove('is-active');
   ui.gameHud.classList.remove('hidden');
   ui.cameraStart.style.display = '';
-  ui.cameraStart.innerHTML = '<span class="camera-icon" aria-hidden="true">◎</span> JUGAR CON CÁMARA <span class="button-arrow">→</span>';
-  ui.manualStart.innerHTML = '<span aria-hidden="true">⌨</span> PROBAR CON TECLADO';
-  ui.startOverlay.querySelector('.pretitle').innerHTML = '<span class="pill-icon">↔</span> TU CUERPO ES EL JOYSTICK';
-  ui.startOverlay.querySelector('h2').innerHTML = 'UN PASO.<br /><span>UN DODGE.</span>';
-  ui.startOverlay.querySelector('p').textContent = 'Movete para cambiar de carril. Agachate para pasar debajo. ¿Cuánto aguantás?';
+  ui.cameraStart.innerHTML = '<span class="camera-icon" aria-hidden="true">◎</span> BAILAR CON CÁMARA <span class="button-arrow">→</span>';
+  ui.manualStart.innerHTML = '<span aria-hidden="true">⌨</span> PROBAR SIN CÁMARA';
+  ui.startOverlay.querySelector('.pretitle').innerHTML = '<span class="pill-icon">♫</span> TU CUERPO ES EL JOYSTICK';
+  ui.startOverlay.querySelector('h2').innerHTML = '¡A PISAR<br /><span>AL RITMO!</span>';
+  ui.startOverlay.querySelector('p').textContent = 'Seguí las flechas: movete a los costados, levantá los brazos o agachate justo cuando llegan al piso.';
   renderLives();
   updateHUD();
   setCameraState('EN ESPERA');
@@ -1008,15 +1091,12 @@ function backToHome() {
 }
 
 function setDucking(pressed) {
-  state.isDucking = pressed;
+  if (pressed) hitDanceAction('down');
   ui.duckControl.classList.toggle('pressed', pressed);
 }
 
 function moveLane(direction) {
-  if (state.phase !== 'playing') return;
-  state.targetLane = clamp(state.targetLane + direction, 0, 2);
-  state.playerLane = state.targetLane;
-  addPop(`CARRIL ${['IZQ', 'CENTRO', 'DER'][state.targetLane]}`, state.targetLane, '#c5f66a');
+  hitDanceAction(direction < 0 ? 'left' : 'right');
 }
 
 function playChime(impact = false) {
@@ -1036,6 +1116,20 @@ function playChime(impact = false) {
   } catch {
     // Audio is decorative; gameplay keeps working if the browser blocks playback.
   }
+}
+
+function playBeatTick() {
+  if (!state.audio || state.muted) return;
+  try {
+    const oscillator = state.audio.createOscillator();
+    const gain = state.audio.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(880, state.audio.currentTime);
+    gain.gain.setValueAtTime(0.018, state.audio.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, state.audio.currentTime + 0.045);
+    oscillator.connect(gain); gain.connect(state.audio.destination);
+    oscillator.start(); oscillator.stop(state.audio.currentTime + 0.05);
+  } catch { /* The visual rhythm remains available if audio is blocked. */ }
 }
 
 function initializeAudio() {
@@ -1085,6 +1179,7 @@ ui.restartButton.addEventListener('click', () => {
 });
 ui.leftControl.addEventListener('click', () => moveLane(-1));
 ui.rightControl.addEventListener('click', () => moveLane(1));
+ui.upControl.addEventListener('click', () => hitDanceAction('up'));
 ui.duckControl.addEventListener('pointerdown', (event) => {
   event.preventDefault();
   ui.duckControl.setPointerCapture(event.pointerId);
@@ -1127,6 +1222,7 @@ document.addEventListener('keydown', (event) => {
   }
   if (['arrowleft', 'a'].includes(key)) moveLane(-1);
   if (['arrowright', 'd'].includes(key)) moveLane(1);
+  if (['arrowup', 'w'].includes(key) && state.phase === 'playing') hitDanceAction('up');
   if (['arrowdown', 's', ' '].includes(key) && state.phase === 'playing') setDucking(true);
   if (key === 'p' && state.phase === 'playing') pauseGame(false);
   if (['enter', ' '].includes(key) && state.phase === 'idle') triggerStart('manual');
