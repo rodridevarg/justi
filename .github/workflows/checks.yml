@@ -1,0 +1,20 @@
+name: Verificar Body Dodge
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  camera-regressions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Revisar el flujo de cámara y el juego
+        run: node --test tests/*.test.mjs
+      - name: Verificar que existen el detector, WASM y el modelo
+        run: node tests/check-assets.mjs
+

@@ -1,3 +1,5 @@
+import { loadPoseDetector } from './pose-detector.mjs?v=0.1.1';
+
 const WORLD = { width: 960, height: 600, horizon: 155, finishLine: 0.96 };
 const LANE_OFFSET = [-1, 0, 1];
 const ELEMENTS = [
@@ -9,7 +11,7 @@ const ELEMENTS = [
   'countdownNumber', 'cameraStart', 'manualStart', 'cameraVideo', 'poseCanvas', 'cameraPlaceholder',
   'cameraRec', 'trackingIndicator', 'trackingLabel', 'cameraCard', 'cameraState', 'controlStatus',
   'lanePip', 'pauseButton', 'manualPanel', 'leftControl', 'rightControl', 'duckControl',
-  'fullscreenBtn', 'muteBtn', 'gameHud',
+  'fullscreenBtn', 'muteBtn', 'gameHud', 'cameraError', 'cameraErrorMessage',
 ];
 const ui = Object.fromEntries(ELEMENTS.map((id) => [id, document.getElementById(id)]));
 const canvas = ui.gameCanvas;
@@ -19,12 +21,12 @@ const poseCtx = ui.poseCanvas.getContext('2d');
 const MOTION_REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 const state = {
-  phase: 'idle', mode: null, stream: null, worker: null, workerReady: false,
-  gameTime: 0, clock: 0, previousFrame: 0, lastDetectionAt: 0, workerBusy: false,
+  phase: 'idle', mode: null, stream: null, detectorReady: false,
+  gameTime: 0, clock: 0, previousFrame: 0, lastDetectionAt: 0,
   lastVideoTime: -1, lastBodyAt: 0, playerLane: 1, targetLane: 1, playerPosition: 0, isDucking: false,
   lives: 3, score: 0, combo: 0, dodges: 0, obstacles: [], nextObstacleAt: 0,
   effects: [], stars: [], shake: 0, muted: true, audio: null,
-  calibrationSamples: [], calibrationStarted: 0, baseline: null, calibrationHold: false,
+  calibrationSamples: [], calibrationStarted: 0, calibrationWaitStarted: 0, baseline: null, calibrationHold: false,
   body: null, highStreak: 0, lowStreak: 0, lastLaneSignal: 0,
   cameraError: '', cameraSession: 0, finishedByTime: false, detector: null,
 };
@@ -61,7 +63,8 @@ function renderLives() {
 
 function setTracking(found) {
   ui.trackingIndicator.classList.toggle('is-tracking', found);
-  ui.trackingLabel.textContent = found ? 'SIGUIÉNDOTE' : state.workerReady ? 'BUSCANDO' : 'CONECTANDO';
+  ui.trackingLabel.textContent = found ? 'SIGUIÉNDOTE'
+    : state.mode !== 'camera' ? 'ESPERANDO' : state.detectorReady ? 'BUSCANDO' : 'PREPARANDO';
 }
 
 function paintPosePreview(body) {
@@ -501,14 +504,15 @@ function updateGame(dt) {
 }
 
 function updateFrame(now) {
-  const elapsed = Math.min(0.05, Math.max(0, (now - (state.previousFrame || now)) / 1000));
+  const gameElapsed = Math.max(0, (now - (state.previousFrame || now)) / 1000);
+  const elapsed = Math.min(0.05, gameElapsed);
   state.previousFrame = now;
-  state.clock += elapsed;
-  updateGame(elapsed);
+  state.clock += gameElapsed;
+  updateGame(gameElapsed);
 
   // MediaPipe runs on the main thread: WebGL/WASM are more reliable on mobile
   // than inside a module Worker. Throttle inference to keep rendering responsive.
-  if (state.mode === 'camera' && state.workerReady && state.detector &&
+  if (state.mode === 'camera' && state.detectorReady && state.detector &&
       video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
       now - state.lastDetectionAt > 125 && video.currentTime !== state.lastVideoTime) {
     state.lastDetectionAt = now;
@@ -516,7 +520,7 @@ function updateFrame(now) {
     try {
       const result = state.detector.detectForVideo(video, now);
       const landmarks = result.landmarks?.[0];
-      onWorkerMessage({ data: { type: 'POSE', body: landmarks ? extractBody(landmarks) : null } });
+      handlePose(landmarks ? extractBody(landmarks) : null);
     } catch (error) {
       console.error('[Body Dodge] Falló la inferencia:', error);
       failCamera('La detección se interrumpió: ' + (error?.message || 'error desconocido'));
@@ -537,17 +541,18 @@ function updateFrame(now) {
 function startCalibration() {
   state.phase = 'calibrating';
   state.calibrationSamples = [];
-  state.calibrationStarted = performance.now();
+  state.calibrationStarted = 0;
+  state.calibrationWaitStarted = performance.now();
   state.calibrationHold = true;
   state.body = null;
   ui.calibrationIcon.textContent = '◉';
   ui.calibrationLabel.textContent = 'CÁMARA CONECTADA';
   ui.calibrationTitle.innerHTML = 'BUSCANDO<br /><span>TU POSE.</span>';
-  ui.calibrationHint.textContent = 'Parate frente a la cámara, con la cabeza y los hombros a la vista.';
+  ui.calibrationHint.textContent = 'Parate frente a la cámara, con los hombros y las caderas a la vista.';
   ui.calibrationFootnote.textContent = 'LA IMAGEN SE PROCESA EN TU DISPOSITIVO';
   ui.calibrationProgress.style.width = '0%';
   setCameraState('AJUSTANDO', true);
-  setControlStatus('PARATE FRENTE A LA CÁMARA');
+  setControlStatus('MOSTRÁ LOS HOMBROS Y LAS CADERAS');
   ui.cameraPlaceholder.classList.add('hidden');
   video.classList.add('is-active');
   ui.cameraRec.classList.remove('hidden');
@@ -556,7 +561,9 @@ function startCalibration() {
 
 function progressCalibration() {
   const now = performance.now();
-  const fraction = Math.min(1, Math.max(0, (now - state.calibrationStarted) / 1350));
+  const fraction = state.calibrationSamples.length
+    ? Math.min(1, state.calibrationSamples.length / 14, (now - state.calibrationStarted) / 1350)
+    : 0;
   ui.calibrationProgress.style.width = `${Math.min(96, fraction * 100)}%`;
   const enoughSamples = state.calibrationSamples.length >= 14;
 
@@ -582,11 +589,11 @@ function progressCalibration() {
     ui.startOverlay.querySelector('p').textContent = 'La cámara te sigue. Arrancá cuando estés listo.';
     ui.cameraStart.innerHTML = '<span class="camera-icon" aria-hidden="true">◎</span> EMPEZAR PARTIDA <span class="button-arrow">→</span>';
     ui.manualStart.textContent = 'CAMBIAR A CONTROLES MANUALES';
-  } else if (now - state.calibrationStarted > 10000 && !enoughSamples) {
+  } else if (now - state.calibrationWaitStarted > 10000 && !enoughSamples) {
     ui.calibrationIcon.textContent = '↗';
     ui.calibrationLabel.textContent = 'NO ENCONTRAMOS TU POSE';
     ui.calibrationTitle.innerHTML = 'DALE, UN<br /><span>ÚLTIMO INTENTO.</span>';
-    ui.calibrationHint.textContent = 'Alejá un poco la cámara, mejorá la luz y asegurate de que tus hombros aparezcan en pantalla.';
+    ui.calibrationHint.textContent = 'Alejá un poco la cámara, mejorá la luz y asegurate de que tus hombros y caderas aparezcan en pantalla.';
     ui.calibrationFootnote.textContent = 'CANCELÁ PARA CAMBIAR A LOS CONTROLES MANUALES';
     ui.calibrationProgress.style.width = '0%';
   } else if (enoughSamples && fraction < 1) {
@@ -594,50 +601,35 @@ function progressCalibration() {
   }
 }
 
-function onWorkerMessage({ data }) {
-  if (data?.type === 'READY') {
-    state.workerReady = true;
-    ui.cameraState.innerHTML = '<span class="state-dot"></span> CÁMARA ACTIVA';
-    ui.trackingLabel.textContent = 'BUSCANDO';
-    startCalibration();
-    return;
-  }
-  if (data?.type === 'POSE') {
-    state.workerBusy = false;
-    if (data.body) {
-      state.body = data.body;
-      state.lastBodyAt = performance.now();
-      state.calibrationSamples.push(data.body);
+function handlePose(body) {
+  if (body) {
+    state.body = body;
+    state.lastBodyAt = performance.now();
+    if (state.phase === 'calibrating') {
+      if (!state.calibrationSamples.length) state.calibrationStarted = performance.now();
+      state.calibrationSamples.push(body);
       if (state.calibrationSamples.length > 45) state.calibrationSamples.shift();
-      setTracking(true);
-      paintPosePreview(data.body);
-      updatePlayerFromPose(data.body);
-      if (state.phase === 'paused' && ui.pauseEyebrow.textContent === 'TE PERDIMOS DE VISTA') {
-        ui.pauseEyebrow.textContent = 'CÁMARA ACTIVA';
-        ui.pauseTitle.innerHTML = 'YA VOLVISTE.<br /><span>¡SEGUÍ!</span>';
-        ui.pauseHint.textContent = 'Te encontramos de nuevo. Tocá el botón y esquivá el próximo obstáculo.';
-        ui.resumeButton.disabled = false;
-        ui.resumeButton.style.opacity = '';
-        setControlStatus('CÁMARA ACTIVA · PODÉS SEGUIR', 'active');
-      }
-    } else {
-      state.body = null;
-      setTracking(false);
-      poseCtx.clearRect(0, 0, ui.poseCanvas.width, ui.poseCanvas.height);
     }
-    if (state.phase === 'calibrating') progressCalibration();
-    return;
+    setTracking(true);
+    paintPosePreview(body);
+    updatePlayerFromPose(body);
+    if (state.phase === 'paused' && ui.pauseEyebrow.textContent === 'TE PERDIMOS DE VISTA') {
+      ui.pauseEyebrow.textContent = 'CÁMARA ACTIVA';
+      ui.pauseTitle.innerHTML = 'YA VOLVISTE.<br /><span>¡SEGUÍ!</span>';
+      ui.pauseHint.textContent = 'Te encontramos de nuevo. Tocá el botón y esquivá el próximo obstáculo.';
+      ui.resumeButton.disabled = false;
+      ui.resumeButton.style.opacity = '';
+      setControlStatus('CÁMARA ACTIVA · PODÉS SEGUIR', 'active');
+    }
+  } else {
+    state.body = null;
+    state.calibrationSamples = [];
+    state.calibrationStarted = 0;
+    setTracking(false);
+    poseCtx.clearRect(0, 0, ui.poseCanvas.width, ui.poseCanvas.height);
   }
-  if (data?.type === 'ERROR') {
-    state.workerBusy = false;
-    state.cameraError = data.message;
-    failCamera('Error de detección: ' + (data.message || 'desconocido'));
-  }
+  if (state.phase === 'calibrating') progressCalibration();
 }
-
-const VISION_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs';
-const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm';
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
 
 function extractBody(landmarks) {
   const visible = (point) => point && (point.visibility ?? point.presence ?? 1) >= 0.45;
@@ -654,52 +646,52 @@ function extractBody(landmarks) {
   };
 }
 
-async function createWorker() {
-  // The former module Worker could not reliably initialize MediaPipe on Android.
-  // Keep the method name to minimize changes to the existing game lifecycle.
-  const session = state.cameraSession;
-  let detector;
+async function createDetector(session) {
+  const detector = await loadPoseDetector({
+    isCurrent: () => session === state.cameraSession,
+    onProgress: (message) => { ui.calibrationHint.textContent = message; },
+  });
+  if (session !== state.cameraSession) {
+    detector.close();
+    return;
+  }
+  state.detector = detector;
+  state.detectorReady = true;
+  startCalibration();
+}
+
+function resetStartButtons() {
+  for (const button of [ui.cameraStart, ui.manualStart]) {
+    button.disabled = false;
+    button.style.opacity = '';
+    button.style.cursor = '';
+  }
+}
+
+function clearCameraError() {
+  state.cameraError = '';
+  ui.cameraError.classList.add('hidden');
+  ui.cameraErrorMessage.textContent = '';
+}
+
+async function playCameraVideo() {
+  let timer;
   try {
-    ui.calibrationHint.textContent = 'Descargando el detector corporal…';
-    const { FilesetResolver, PoseLandmarker } = await import(VISION_URL);
-    if (session !== state.cameraSession) return;
-    const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-    if (session !== state.cameraSession) return;
-    const common = {
-      runningMode: 'VIDEO', numPoses: 1,
-      minPoseDetectionConfidence: 0.55,
-      minPosePresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    };
-    try {
-      ui.calibrationHint.textContent = 'Iniciando detección con GPU…';
-      detector = await PoseLandmarker.createFromOptions(vision, {
-        ...common, baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-      });
-    } catch (gpuError) {
-      console.warn('[Body Dodge] GPU no disponible; probando CPU:', gpuError);
-      ui.calibrationHint.textContent = 'Probando modo compatible con CPU…';
-      detector = await PoseLandmarker.createFromOptions(vision, {
-        ...common, baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
-      });
-    }
-    if (session !== state.cameraSession) {
-      detector.close();
-      return;
-    }
-    state.detector = detector;
-    onWorkerMessage({ data: { type: 'READY' } });
-  } catch (error) {
-    detector?.close?.();
-    console.error('[Body Dodge] No se pudo inicializar MediaPipe:', error);
-    throw new Error('MediaPipe no pudo iniciarse: ' + (error?.message || 'error desconocido'));
+    await Promise.race([
+      video.play(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('La cámara no envió imágenes. Cerrá otras apps que usen la cámara y volvé a intentarlo.')), 12000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 async function startCamera() {
+  if (state.phase === 'loading' || state.phase === 'calibrating') return;
   if (state.phase === 'ready' && state.mode === 'camera') {
-    state.calibrationHold = false;
-    startCountdown();
+    beginGame('camera');
     return;
   }
 
@@ -713,6 +705,7 @@ async function startCamera() {
     return;
   }
 
+  clearCameraError();
   if (state.stream) stopCamera();
   const session = ++state.cameraSession;
   state.mode = 'camera';
@@ -741,49 +734,68 @@ async function startCamera() {
   ui.calibrationFootnote.textContent = 'LA IMAGEN NUNCA SALE DE TU DISPOSITIVO';
   ui.calibrationProgress.style.width = '0%';
 
+  let stage = 'permission';
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { facingMode: { ideal: 'user' }, width: { ideal: 640, max: 960 }, height: { ideal: 480, max: 720 }, frameRate: { ideal: 24, max: 30 } },
+      video: { facingMode: { ideal: 'user' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
     });
     if (session !== state.cameraSession) {
       for (const track of stream.getTracks()) track.stop();
       return;
     }
     state.stream = stream;
-    video.srcObject = state.stream;
-    await video.play();
+    const track = stream.getVideoTracks()[0];
+    track?.addEventListener('ended', () => {
+      if (session === state.cameraSession) failCamera('La cámara se desconectó. Volvé a activarla para seguir jugando.');
+    }, { once: true });
+    stage = 'video';
+    video.srcObject = stream;
+    await playCameraVideo();
     if (session !== state.cameraSession) return;
-    await createWorker();
+    ui.cameraPlaceholder.classList.add('hidden');
+    video.classList.add('is-active');
+    ui.cameraRec.classList.remove('hidden');
+    setCameraState('CÁMARA ACTIVA', true);
+    stage = 'detector';
+    await createDetector(session);
   } catch (error) {
     if (session !== state.cameraSession) return;
     console.error('[Body Dodge] Error de cámara:', error);
     const denied = error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError';
     const missing = error?.name === 'NotFoundError' || error?.name === 'DevicesNotFoundError';
-    const detail = denied
-      ? 'No tenés la cámara habilitada. Permití el acceso en el navegador para probar el juego.'
-      : missing
-        ? 'No encontramos una cámara conectada. Podés jugar con el teclado o con los controles táctiles.'
-        : 'Error al iniciar: ' + (error?.message || 'desconocido') + '. Podés intentar otra vez.';
+    const detail = stage === 'detector' ? error.message
+      : stage === 'video' && denied
+        ? 'La cámara tiene permiso, pero el video no pudo reproducirse. Abrí el enlace directamente en Chrome o Safari.'
+        : denied
+          ? 'El navegador bloqueó la cámara. Habilitala en los permisos de este sitio y volvé a intentarlo.'
+          : missing
+            ? 'No encontramos una cámara disponible en este dispositivo.'
+            : error?.name === 'NotReadableError'
+              ? 'La cámara está ocupada. Cerrá otras apps que la usen y volvé a intentarlo.'
+              : error?.message || 'No pudimos iniciar la cámara. Volvé a intentarlo.';
     failCamera(detail);
   }
 }
 
 function failCamera(message) {
+  stopCountdown();
+  stopCamera();
+  state.cameraError = message;
+  ui.cameraErrorMessage.textContent = message;
+  ui.cameraError.classList.remove('hidden');
+  ui.cameraError.scrollIntoView({ block: 'nearest' });
+  ui.pauseButton.disabled = true;
+  ui.gameFrame.classList.remove('is-playing');
   state.phase = 'idle';
   state.mode = null;
-  ui.cameraStart.disabled = false;
-  ui.manualStart.disabled = false;
-  ui.cameraStart.style.opacity = '';
-  ui.manualStart.style.opacity = '';
-  ui.cameraStart.style.cursor = '';
+  resetStartButtons();
   ui.startOverlay.querySelector('.pretitle').innerHTML = '<span class="pill-icon">↔</span> TU CUERPO ES EL JOYSTICK';
   ui.startOverlay.querySelector('h2').innerHTML = 'UN PASO.<br /><span>UN DODGE.</span>';
   ui.startOverlay.querySelector('p').textContent = message;
   ui.cameraStart.innerHTML = '<span class="camera-icon" aria-hidden="true">◎</span> INTENTAR DE NUEVO <span class="button-arrow">→</span>';
   ui.manualStart.innerHTML = '<span aria-hidden="true">⌨</span> PROBAR CON TECLADO';
   ui.cameraStart.style.display = '';
-  ui.cameraStart.style.display = 'flex';
   ui.startOverlay.classList.remove('hidden');
   setCameraState('NO DISPONIBLE');
   setTracking(false);
@@ -792,7 +804,6 @@ function failCamera(message) {
   ui.cameraRec.classList.add('hidden');
   video.classList.remove('is-active');
   poseCtx.clearRect(0, 0, ui.poseCanvas.width, ui.poseCanvas.height);
-  stopCamera();
   setOverlay('startOverlay');
 }
 
@@ -802,23 +813,24 @@ function stopCamera() {
     try { state.detector.close(); } catch (error) { console.warn('[Body Dodge] Error al cerrar detector:', error); }
     state.detector = null;
   }
-  if (state.worker) {
-    state.worker.terminate();
-    state.worker = null;
-  }
-  state.workerReady = false;
-  state.workerBusy = false;
+  state.detectorReady = false;
   if (state.stream) {
     for (const track of state.stream.getTracks()) track.stop();
     state.stream = null;
   }
   video.srcObject = null;
+  state.body = null;
+  state.baseline = null;
+  state.calibrationSamples = [];
+  state.calibrationStarted = 0;
+  state.lastDetectionAt = 0;
   state.lastBodyAt = 0;
   state.lastVideoTime = -1;
 }
 
 function beginGame(mode) {
   stopCountdown();
+  clearCameraError();
   if (mode === 'manual') {
     stopCamera();
     state.mode = 'manual';
@@ -833,7 +845,11 @@ function beginGame(mode) {
     ui.manualPanel.classList.remove('hidden');
     setControlStatus('FLECHAS O A · D · ESPACIO', 'active');
   } else {
-    if (state.phase !== 'ready' || !state.workerReady) return;
+    if (!['ready', 'over'].includes(state.phase) || !state.detectorReady || !state.baseline) return;
+    if (!state.body || performance.now() - state.lastBodyAt > 1000) {
+      startCalibration();
+      return;
+    }
     state.calibrationHold = false;
     ui.manualPanel.classList.add('hidden');
     setControlStatus('CÁMARA LISTA · MOVETE PARA ESQUIVAR', 'active');
@@ -913,7 +929,7 @@ function endGame(survived) {
 }
 
 function pauseGame(lostTracking = false) {
-  if (state.phase !== 'playing' && state.phase !== 'countdown') return;
+  if (state.phase !== 'playing' && state.phase !== 'countdown' && !(lostTracking && state.phase === 'paused')) return;
   stopCountdown();
   state.phase = 'paused';
   state.previousFrame = performance.now();
@@ -939,7 +955,7 @@ function pauseGame(lostTracking = false) {
 
 function resumeGame() {
   if (state.phase !== 'paused') return;
-  if (state.mode === 'camera' && (!state.workerReady || !state.body || performance.now() - state.lastBodyAt > 1000)) {
+  if (state.mode === 'camera' && (!state.detectorReady || !state.body || performance.now() - state.lastBodyAt > 1000)) {
     pauseGame(true);
     return;
   }
@@ -953,6 +969,8 @@ function resumeGame() {
 }
 
 function backToHome() {
+  resetStartButtons();
+  clearCameraError();
   stopCountdown();
   stopCamera();
   state.mode = null;
@@ -1033,7 +1051,7 @@ function initializeAudio() {
 }
 
 function triggerStart(mode) {
-  initializeAudio();
+  if (!state.muted) initializeAudio();
   if (mode === 'manual') {
     ui.startOverlay.classList.remove('hidden');
     beginGame('manual');
@@ -1062,7 +1080,7 @@ ui.pauseQuit.addEventListener('click', backToHome);
 ui.gameOverHome.addEventListener('click', backToHome);
 ui.restartButton.addEventListener('click', () => {
   initializeAudio();
-  if (state.mode === 'camera' && state.workerReady) beginGame('camera');
+  if (state.mode === 'camera' && state.detectorReady) beginGame('camera');
   else beginGame('manual');
 });
 ui.leftControl.addEventListener('click', () => moveLane(-1));
@@ -1117,6 +1135,9 @@ document.addEventListener('keydown', (event) => {
 document.addEventListener('keyup', (event) => {
   if (['arrowdown', 's', ' '].includes(event.key.toLowerCase())) setDucking(false);
 });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) pauseGame(false);
+});
 window.addEventListener('blur', () => {
   setDucking(false);
   if (state.phase === 'playing') pauseGame(false);
@@ -1131,3 +1152,5 @@ createStars();
 renderLives();
 updateHUD();
 requestAnimationFrame(updateFrame);
+
+

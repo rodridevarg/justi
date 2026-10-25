@@ -33,3 +33,13 @@ El workflow de Actions incluido publica el contenido estático cada vez que `mai
 
 Los rankings, los perfiles, el juego en línea, los saltos y la grabación de partidas quedan fuera de esta primera entrega. La sensibilidad del seguimiento y la velocidad de los obstáculos son un punto de partida; conviene ajustarlas después de jugar unas primeras partidas con distintas cámaras.
 
+## Cámara y comprobaciones
+
+El detector usa la versión publicada `0.10.21` de MediaPipe, con JS y WASM de la misma versión. Si falla el arranque, aparece un aviso arriba de la pista con la causa y una acción para volver a intentarlo. La vista previa aparece mientras se prepara el detector. La calibración requiere que se vean hombros y caderas durante varias detecciones consecutivas.
+
+Con Node.js 22 o posterior, ejecutá `node --test tests/*.test.mjs` para las pruebas de regresión y `node tests/check-assets.mjs` para comprobar las descargas externas. Este último comando necesita Internet. GitHub Actions ejecuta ambos al abrir un PR y al actualizar `main`; el juego sigue sin necesitar compilación ni instalación de paquetes.
+
+Para comprobar el detector real sin cámara, iniciá el servidor local y abrí `tests/browser-camera.html`. Incluye una prueba de calibración con video sintético y otra de fallo de descarga. Los hallazgos y los límites de la revisión están en [docs/camera-review.md](docs/camera-review.md).
+
+
+
