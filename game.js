@@ -26,7 +26,7 @@ const state = {
   effects: [], stars: [], shake: 0, muted: true, audio: null,
   calibrationSamples: [], calibrationStarted: 0, baseline: null, calibrationHold: false,
   body: null, highStreak: 0, lowStreak: 0, lastLaneSignal: 0,
-  cameraError: '', cameraSession: 0, finishedByTime: false,
+  cameraError: '', cameraSession: 0, finishedByTime: false, detector: null,
 };
 
 const rand = (min, max) => min + Math.random() * (max - min);
@@ -506,18 +506,21 @@ function updateFrame(now) {
   state.clock += elapsed;
   updateGame(elapsed);
 
-  if (state.mode === 'camera' && state.workerReady && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && !state.workerBusy && now - state.lastDetectionAt > 95 && video.currentTime !== state.lastVideoTime) {
+  // MediaPipe runs on the main thread: WebGL/WASM are more reliable on mobile
+  // than inside a module Worker. Throttle inference to keep rendering responsive.
+  if (state.mode === 'camera' && state.workerReady && state.detector &&
+      video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+      now - state.lastDetectionAt > 125 && video.currentTime !== state.lastVideoTime) {
     state.lastDetectionAt = now;
     state.lastVideoTime = video.currentTime;
-    state.workerBusy = true;
-    createImageBitmap(video).then((bitmap) => {
-      if (state.worker && state.workerReady) {
-        state.worker.postMessage({ type: 'FRAME', timestamp: Math.round(video.currentTime * 1000), bitmap }, [bitmap]);
-      } else {
-        bitmap.close();
-        state.workerBusy = false;
-      }
-    }).catch(() => { state.workerBusy = false; });
+    try {
+      const result = state.detector.detectForVideo(video, now);
+      const landmarks = result.landmarks?.[0];
+      onWorkerMessage({ data: { type: 'POSE', body: landmarks ? extractBody(landmarks) : null } });
+    } catch (error) {
+      console.error('[Body Dodge] Falló la inferencia:', error);
+      failCamera('La detección se interrumpió: ' + (error?.message || 'error desconocido'));
+    }
   }
 
   if (state.mode === 'camera' && state.phase === 'playing' && state.lastBodyAt > 0 && now - state.lastBodyAt > 1300) {
@@ -628,38 +631,69 @@ function onWorkerMessage({ data }) {
   if (data?.type === 'ERROR') {
     state.workerBusy = false;
     state.cameraError = data.message;
-    failCamera('No pudimos iniciar la detección corporal. Revisá tu conexión e intentá otra vez.');
+    failCamera('Error de detección: ' + (data.message || 'desconocido'));
   }
 }
 
-function createWorker() {
-  return new Promise((resolve, reject) => {
-    let worker;
+const VISION_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs';
+const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm';
+const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+
+function extractBody(landmarks) {
+  const visible = (point) => point && (point.visibility ?? point.presence ?? 1) >= 0.45;
+  const ls = landmarks[11], rs = landmarks[12], lh = landmarks[23], rh = landmarks[24];
+  if (![ls, rs, lh, rh].every(visible)) return null;
+  return {
+    shoulderX: (ls.x + rs.x) / 2,
+    shoulderY: (ls.y + rs.y) / 2,
+    hipY: (lh.y + rh.y) / 2,
+    shoulderWidth: Math.abs(ls.x - rs.x),
+    torsoScale: Math.max(0.08, Math.abs((lh.y + rh.y - ls.y - rs.y) / 2)),
+    outline: [11, 12, 14, 16, 24, 23, 25, 27].map((i) =>
+      visible(landmarks[i]) ? { x: landmarks[i].x, y: landmarks[i].y } : null),
+  };
+}
+
+async function createWorker() {
+  // The former module Worker could not reliably initialize MediaPipe on Android.
+  // Keep the method name to minimize changes to the existing game lifecycle.
+  const session = state.cameraSession;
+  let detector;
+  try {
+    ui.calibrationHint.textContent = 'Descargando el detector corporal…';
+    const { FilesetResolver, PoseLandmarker } = await import(VISION_URL);
+    if (session !== state.cameraSession) return;
+    const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+    if (session !== state.cameraSession) return;
+    const common = {
+      runningMode: 'VIDEO', numPoses: 1,
+      minPoseDetectionConfidence: 0.55,
+      minPosePresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    };
     try {
-      worker = new Worker(new URL('./pose-worker.js', import.meta.url), { type: 'module', name: 'body-dodge-pose' });
-    } catch (error) {
-      reject(error);
+      ui.calibrationHint.textContent = 'Iniciando detección con GPU…';
+      detector = await PoseLandmarker.createFromOptions(vision, {
+        ...common, baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+      });
+    } catch (gpuError) {
+      console.warn('[Body Dodge] GPU no disponible; probando CPU:', gpuError);
+      ui.calibrationHint.textContent = 'Probando modo compatible con CPU…';
+      detector = await PoseLandmarker.createFromOptions(vision, {
+        ...common, baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
+      });
+    }
+    if (session !== state.cameraSession) {
+      detector.close();
       return;
     }
-
-    state.worker = worker;
-    const timeout = window.setTimeout(() => reject(new Error('La detección tardó demasiado en iniciar.')), 32000);
-    worker.onmessage = (event) => {
-      onWorkerMessage(event);
-      if (event.data?.type === 'READY') {
-        clearTimeout(timeout);
-        resolve();
-      } else if (event.data?.type === 'ERROR') {
-        clearTimeout(timeout);
-        reject(new Error(event.data.message));
-      }
-    };
-    worker.onerror = (event) => {
-      clearTimeout(timeout);
-      reject(new Error(event.message || 'No se pudo cargar MediaPipe.'));
-    };
-    worker.postMessage({ type: 'INIT' });
-  });
+    state.detector = detector;
+    onWorkerMessage({ data: { type: 'READY' } });
+  } catch (error) {
+    detector?.close?.();
+    console.error('[Body Dodge] No se pudo inicializar MediaPipe:', error);
+    throw new Error('MediaPipe no pudo iniciarse: ' + (error?.message || 'error desconocido'));
+  }
 }
 
 async function startCamera() {
@@ -730,7 +764,7 @@ async function startCamera() {
       ? 'No tenés la cámara habilitada. Permití el acceso en el navegador para probar el juego.'
       : missing
         ? 'No encontramos una cámara conectada. Podés jugar con el teclado o con los controles táctiles.'
-        : 'No se pudo conectar la cámara o el detector. Podés intentarlo de nuevo o jugar con los controles manuales.';
+        : 'Error al iniciar: ' + (error?.message || 'desconocido') + '. Podés intentar otra vez.';
     failCamera(detail);
   }
 }
@@ -764,6 +798,10 @@ function failCamera(message) {
 
 function stopCamera() {
   state.cameraSession += 1;
+  if (state.detector) {
+    try { state.detector.close(); } catch (error) { console.warn('[Body Dodge] Error al cerrar detector:', error); }
+    state.detector = null;
+  }
   if (state.worker) {
     state.worker.terminate();
     state.worker = null;
