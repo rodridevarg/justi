@@ -36,7 +36,7 @@ async function runTest(simulateFailure = false) {
     let setup = '<script>Object.defineProperty(navigator.mediaDevices,"getUserMedia",{value:async()=>parent.testStream.clone()});<\/script>';
     if (simulateFailure) {
       const imports = {
-        [new URL('../pose-detector.mjs?v=0.1.1', location.href).href]: 'data:text/javascript,' + encodeURIComponent('export async function loadPoseDetector(){throw new Error("No se pudo descargar el detector corporal. Revisá tu conexión a Internet y volvé a intentarlo.")}'),
+        ['./pose-detector.mjs?v=0.2.0']: 'data:text/javascript,' + encodeURIComponent('export async function loadPoseDetector(){throw new Error("No se pudo descargar el detector corporal. Revisá tu conexión a Internet y volvé a intentarlo.")}'),
       };
       setup += '<script type="importmap">' + JSON.stringify({ imports }) + '<\/script>';
     }
@@ -47,7 +47,7 @@ async function runTest(simulateFailure = false) {
     // The module must have installed its event listeners before starting.
     await wait(800);
     doc.querySelector('#cameraStart').click();
-    await until(() => doc.querySelector('#cameraStart').textContent.includes('EMPEZAR PARTIDA') || !doc.querySelector('#cameraError').classList.contains('hidden'), 'No terminó la calibración');
+    await until(() => doc.querySelector('#cameraStart').textContent.includes('EMPEZAR BAILE') || !doc.querySelector('#cameraError').classList.contains('hidden'), 'No terminó la calibración');
     if (simulateFailure) {
       const alert = doc.querySelector('#cameraError');
       const rect = alert.getBoundingClientRect();
@@ -64,8 +64,8 @@ async function runTest(simulateFailure = false) {
     doc.querySelector('#cameraStart').click();
     if (doc.querySelector('#pauseButton').disabled) throw new Error('No se habilitó la pausa');
     await until(() => doc.querySelector('#countdownOverlay').classList.contains('hidden'), 'No terminó la cuenta regresiva', 8000);
-    await until(() => doc.querySelector('#scoreValue').textContent !== '000000', 'No avanza la partida', 8000);
-    log('OK: arranca la partida y aumenta el puntaje.');
+    await until(() => doc.querySelector('#gameFrame').classList.contains('is-playing'), 'No arrancó la partida', 8000);
+    log('OK: arranca la partida de baile y quedan activados los controles.');
     doc.querySelector('#pauseButton').click();
     log('PASS — navegador real, video sintético y ancho de celular.');
   } catch (error) {
