@@ -4,7 +4,7 @@
 
 ## Jugar
 
-- **Con cámara:** abrí la versión publicada en HTTPS o usá `localhost`, aceptá el permiso y dejá el teléfono en vertical. El juego solicita video 9:16 y muestra la pista superpuesta sobre la cámara; alejate hasta que tu cuerpo entre en el encuadre. Después de calibrar, seguí las flechas con pasos laterales, brazos arriba y agachadas.
+- **Con cámara:** abrí la versión publicada en HTTPS o usá `localhost`, aceptá el permiso y dejá el teléfono en vertical. El juego solicita video 9:16 y muestra la pista superpuesta sobre la cámara; alejate hasta que tu cuerpo entre en el encuadre. Al terminar la calibración comienza sola la cuenta regresiva; seguí las flechas con pasos laterales, brazos arriba y agachadas.
 - **Sin cámara:** elegí «Probar sin cámara». Los botones táctiles y las flechas del teclado disparan los mismos pasos.
 - **Controles:** ←/A para izquierda, →/D para derecha, ↑/W para brazos arriba y ↓/S/espacio para agacharse. P o Escape pausa la partida.
 - **Objetivo:** acertá las flechas cuando llegan a la línea. «Perfect» y «Bien» suman puntos; tres pasos perdidos seguidos consumen una vida. La pista dura 30 segundos.

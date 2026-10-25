@@ -1,4 +1,4 @@
-import { loadPoseDetector } from './pose-detector.mjs?v=0.3.1';
+import { loadPoseDetector } from './pose-detector.mjs?v=0.3.2';
 
 const WORLD = { width: 960, height: 600, horizon: 155, finishLine: 0.96 };
 const WIDE_WORLD = { width: 960, height: 600, horizon: 155 };
@@ -659,6 +659,7 @@ function updateFrame(now) {
 }
 
 function startCalibration() {
+  stopReadyAutoStart();
   state.phase = 'calibrating';
   state.calibrationSamples = [];
   state.calibrationStarted = 0;
@@ -706,9 +707,14 @@ function progressCalibration() {
     setOverlay('startOverlay');
     ui.startOverlay.querySelector('.pretitle').innerHTML = '<span class="pill-icon">✳</span> YA ESTÁS EN LA PISTA';
     ui.startOverlay.querySelector('h2').innerHTML = 'TU CUERPO.<br /><span>TU JUEGO.</span>';
-    ui.startOverlay.querySelector('p').textContent = 'La cámara te sigue. Arrancá cuando estés listo.';
-    ui.cameraStart.innerHTML = '<span class="camera-icon" aria-hidden="true">◎</span> EMPEZAR BAILE <span class="button-arrow">→</span>';
+    ui.startOverlay.querySelector('p').textContent = '¡Listo! La cuenta regresiva empieza sola. Tocá para empezar ya.';
+    ui.cameraStart.innerHTML = '<span class="camera-icon" aria-hidden="true">◎</span> EMPEZAR AHORA <span class="button-arrow">→</span>';
     ui.manualStart.textContent = 'CAMBIAR A CONTROLES MANUALES';
+    stopReadyAutoStart();
+    readyAutoStartTimer = window.setTimeout(() => {
+      readyAutoStartTimer = 0;
+      if (state.phase === 'ready' && state.mode === 'camera') beginGame('camera');
+    }, 1400);
   } else if (now - state.calibrationWaitStarted > 10000 && !enoughSamples && ui.calibrationLabel.textContent !== 'NO ENCONTRAMOS TU POSE') {
     ui.calibrationIcon.textContent = '↗';
     ui.calibrationLabel.textContent = 'NO ENCONTRAMOS TU POSE';
@@ -939,6 +945,7 @@ function failCamera(message) {
 }
 
 function stopCamera() {
+  stopReadyAutoStart();
   state.cameraSession += 1;
   setCameraPresentation(false);
   if (state.detector) {
@@ -961,6 +968,7 @@ function stopCamera() {
 }
 
 function beginGame(mode) {
+  stopReadyAutoStart();
   stopCountdown();
   clearCameraError();
   if (mode === 'manual') {
@@ -978,10 +986,6 @@ function beginGame(mode) {
     setControlStatus('SEGUÍ LAS FLECHAS · ← ↑ ↓ →', 'active');
   } else {
     if (!['ready', 'over'].includes(state.phase) || !state.detectorReady || !state.baseline) return;
-    if (!state.body || performance.now() - state.lastBodyAt > 1000) {
-      startCalibration();
-      return;
-    }
     state.calibrationHold = false;
     ui.manualPanel.classList.add('hidden');
     setControlStatus('CÁMARA LISTA · BAILÁ AL RITMO', 'active');
@@ -1013,7 +1017,12 @@ function beginGame(mode) {
   startCountdown();
 }
 
+let readyAutoStartTimer = 0;
 let countdownTimer = 0;
+function stopReadyAutoStart() {
+  if (readyAutoStartTimer) clearTimeout(readyAutoStartTimer);
+  readyAutoStartTimer = 0;
+}
 function stopCountdown() {
   if (countdownTimer) clearTimeout(countdownTimer);
   countdownTimer = 0;
@@ -1187,14 +1196,14 @@ function playBeatTick() {
 }
 
 function initializeAudio() {
-  if (state.audio) {
-    state.audio.resume?.().catch(() => {});
-    return;
-  }
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (AudioContextClass) {
-    state.audio = new AudioContextClass();
-    state.audio.resume?.().catch(() => {});
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!state.audio && AudioContextClass) state.audio = new AudioContextClass();
+    const resumed = state.audio?.resume?.();
+    resumed?.catch?.(() => {});
+  } catch (error) {
+    console.warn('[Body Beat] El sonido no está disponible:', error);
+    state.audio = null;
   }
 }
 

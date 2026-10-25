@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const source = await readFile(new URL('../game.js', import.meta.url), 'utf8');
 const pose = { shoulderX: 0.5, shoulderY: 0.3, hipY: 0.6, shoulderWidth: 0.25, torsoScale: 0.3 };
-function harness({ permission, detectorLoader } = {}) {
+function harness({ permission, detectorLoader, audioContext } = {}) {
   const elements = new Map();
   const timers = new Map();
   let time = 1000;
@@ -34,8 +34,8 @@ function harness({ permission, detectorLoader } = {}) {
     return el;
   }
   element('cameraPreview').parentElement = element('cameraCard');
-  const setTimer = (callback) => { const id = ++timerId; timers.set(id, callback); return id; };
-  const window = { matchMedia: () => ({ matches: true }), isSecureContext: true, addEventListener() {}, setTimeout: setTimer };
+  const setTimer = (callback) => { const id = ++timerId; timers.set(id, () => { timers.delete(id); callback(); }); return id; };
+  const window = { matchMedia: () => ({ matches: true }), isSecureContext: true, addEventListener() {}, setTimeout: setTimer, AudioContext: audioContext };
   const sandbox = {
     console, Math, Date, DOMException, window,
     document: { body: element('body'), getElementById: element, addEventListener() {} },
@@ -47,12 +47,12 @@ function harness({ permission, detectorLoader } = {}) {
     __deps: { loadPoseDetector: detectorLoader ?? (async () => detector) },
   };
   vm.createContext(sandbox);
-  vm.runInContext(source.replace(/^import[^\n]+\n/, 'const { loadPoseDetector } = globalThis.__deps;\n') + '\nglobalThis.app = {state, ui, startCamera, stopCamera, backToHome, handlePose, beginGame, failCamera, updateGame, updateFrame, updatePlayerFromPose, hitDanceAction, buildDanceChart, extractBody, endGame, setCameraPresentation};', sandbox);
+  vm.runInContext(source.replace(/^import[^\n]+\n/, 'const { loadPoseDetector } = globalThis.__deps;\n') + '\nglobalThis.app = {state, ui, startCamera, stopCamera, backToHome, handlePose, beginGame, triggerStart, failCamera, updateGame, updateFrame, updatePlayerFromPose, hitDanceAction, buildDanceChart, extractBody, endGame, setCameraPresentation};', sandbox);
   const app = sandbox.app;
   const calibrate = () => {
     for (let i = 0; i < 15; i++) { time += 150; app.handlePose({ ...pose }); }
   };
-  return { ...app, stream, detector, timers, calibrate, documentBody: element('body'), tick: (ms) => { time += ms; }, stopped: () => stopped, closed: () => closed, constraints: () => cameraConstraints };
+  return { ...app, stream, detector, timers, calibrate, documentBody: element('body'), tick: (ms) => { time += ms; }, now: () => time, stopped: () => stopped, closed: () => closed, constraints: () => cameraConstraints };
 }
 
 test('camera play requests a portrait 9:16 stream and moves the preview into the AR stage', async () => {
@@ -158,12 +158,26 @@ test('camera restart after game over resets score, lives, streak and dance chart
   assert.equal(app.state.combo, 0);
 });
 
-test('starting with stale tracking recalibrates instead of starting a blind game', async () => {
+test('the ready screen starts the countdown automatically and lost tracking produces a visible pause', async () => {
   const app = harness();
-  await app.startCamera(); app.calibrate(); app.tick(1400);
-  await app.startCamera();
-  assert.equal(app.state.phase, 'calibrating');
-  assert.equal(app.timers.size, 0);
+  await app.startCamera(); app.calibrate();
+  assert.equal(app.state.phase, 'ready');
+  assert.equal(app.timers.size, 1);
+  app.tick(1400);
+  app.handlePose(null);
+  [...app.timers.values()][0]();
+  assert.equal(app.state.phase, 'countdown');
+  app.state.phase = 'playing';
+  app.updateFrame(app.now());
+  assert.equal(app.state.phase, 'paused');
+  assert.equal(app.ui.pauseEyebrow.textContent, 'TE PERDIMOS DE VISTA');
+});
+
+test('optional audio failure does not block starting a camera game', async () => {
+  const app = harness({ audioContext: class { constructor() { throw new Error('Audio blocked'); } } });
+  await app.startCamera(); app.calibrate();
+  app.triggerStart('camera');
+  assert.equal(app.state.phase, 'countdown');
 });
 
 test('mirrored lateral motion and crouching create dance steps after calibration', async () => {
