@@ -1,4 +1,4 @@
-import { loadPoseDetector } from './pose-detector.mjs?v=0.3.0';
+import { loadPoseDetector } from './pose-detector.mjs?v=0.3.1';
 
 const WORLD = { width: 960, height: 600, horizon: 155, finishLine: 0.96 };
 const WIDE_WORLD = { width: 960, height: 600, horizon: 155 };
