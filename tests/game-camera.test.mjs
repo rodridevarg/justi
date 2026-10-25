@@ -12,6 +12,7 @@ function harness({ permission, detectorLoader } = {}) {
   let timerId = 0;
   let stopped = 0;
   let closed = 0;
+  let cameraConstraints = null;
   const track = { stop() { stopped += 1; }, addEventListener() {} };
   const stream = { getTracks: () => [track], getVideoTracks: () => [track] };
   const detector = { close() { closed += 1; } };
@@ -23,6 +24,8 @@ function harness({ permission, detectorLoader } = {}) {
       id, textContent: '', innerHTML: '', style: {}, disabled: false, width: 640, height: 480,
       classList: { add: (...xs) => xs.forEach((x) => classes.add(x)), remove: (...xs) => xs.forEach((x) => classes.delete(x)), contains: (x) => classes.has(x), toggle(x, force) { const add = force ?? !classes.has(x); add ? classes.add(x) : classes.delete(x); } },
       setAttribute() {}, addEventListener() {}, scrollIntoView() {},
+      appendChild(child) { child.parentElement?.children.splice(child.parentElement.children.indexOf(child), 1); this.children.push(child); child.parentElement = this; return child; },
+      insertBefore(child, before) { child.parentElement?.children.splice(child.parentElement.children.indexOf(child), 1); const index = this.children.indexOf(before); this.children.splice(index < 0 ? this.children.length : index, 0, child); child.parentElement = this; return child; },
       getContext: () => context2d, querySelector: (selector) => element(id + selector),
       play: async () => {}, readyState: 4, currentTime: 1,
     };
@@ -30,26 +33,43 @@ function harness({ permission, detectorLoader } = {}) {
     el.children = id === 'hearts' ? [element('heart0'), element('heart1'), element('heart2')] : [];
     return el;
   }
+  element('cameraPreview').parentElement = element('cameraCard');
   const setTimer = (callback) => { const id = ++timerId; timers.set(id, callback); return id; };
   const window = { matchMedia: () => ({ matches: true }), isSecureContext: true, addEventListener() {}, setTimeout: setTimer };
   const sandbox = {
     console, Math, Date, DOMException, window,
-    document: { getElementById: element, addEventListener() {} },
+    document: { body: element('body'), getElementById: element, addEventListener() {} },
     location: { hostname: 'localhost' },
-    navigator: { mediaDevices: { getUserMedia: permission ?? (async () => stream) } },
+    navigator: { mediaDevices: { getUserMedia: permission ?? (async (constraints) => { cameraConstraints = constraints; return stream; }) } },
     HTMLMediaElement: { HAVE_CURRENT_DATA: 2 },
     performance: { now: () => time },
     requestAnimationFrame() {}, setTimeout: setTimer, clearTimeout: (id) => timers.delete(id),
     __deps: { loadPoseDetector: detectorLoader ?? (async () => detector) },
   };
   vm.createContext(sandbox);
-  vm.runInContext(source.replace(/^import[^\n]+\n/, 'const { loadPoseDetector } = globalThis.__deps;\n') + '\nglobalThis.app = {state, ui, startCamera, backToHome, handlePose, beginGame, failCamera, updateGame, updateFrame, updatePlayerFromPose, hitDanceAction, buildDanceChart, extractBody, endGame};', sandbox);
+  vm.runInContext(source.replace(/^import[^\n]+\n/, 'const { loadPoseDetector } = globalThis.__deps;\n') + '\nglobalThis.app = {state, ui, startCamera, stopCamera, backToHome, handlePose, beginGame, failCamera, updateGame, updateFrame, updatePlayerFromPose, hitDanceAction, buildDanceChart, extractBody, endGame, setCameraPresentation};', sandbox);
   const app = sandbox.app;
   const calibrate = () => {
     for (let i = 0; i < 15; i++) { time += 150; app.handlePose({ ...pose }); }
   };
-  return { ...app, stream, detector, timers, calibrate, tick: (ms) => { time += ms; }, stopped: () => stopped, closed: () => closed };
+  return { ...app, stream, detector, timers, calibrate, documentBody: element('body'), tick: (ms) => { time += ms; }, stopped: () => stopped, closed: () => closed, constraints: () => cameraConstraints };
 }
+
+test('camera play requests a portrait 9:16 stream and moves the preview into the AR stage', async () => {
+  const app = harness();
+  await app.startCamera();
+  assert.equal(app.constraints().video.aspectRatio.ideal, 9 / 16);
+  assert.equal(app.ui.cameraPreview.parentElement, app.ui.arStage);
+  assert.equal(app.state.mode, 'camera');
+  assert.equal(app.ui.gameCanvas.width, 540);
+  assert.equal(app.ui.gameCanvas.height, 960);
+  assert.equal(app.documentBody.classList.contains('camera-ar-mode'), true);
+  app.stopCamera();
+  assert.equal(app.ui.cameraPreview.parentElement, app.ui.cameraCard);
+  assert.equal(app.ui.gameCanvas.width, 960);
+  assert.equal(app.ui.gameCanvas.height, 600);
+  assert.equal(app.documentBody.classList.contains('camera-ar-mode'), false);
+});
 
 test('permission followed by detector failure keeps the error visible and releases the camera', async () => {
   const app = harness({ detectorLoader: async () => { throw new Error('No se pudo descargar el detector corporal.'); } });
@@ -210,4 +230,3 @@ test('slow rendering counts the full elapsed time toward the 30-second round', (
   app.updateFrame(3500);
   assert.equal(app.state.gameTime, 2.5);
 });
-

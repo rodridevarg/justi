@@ -5,6 +5,41 @@
 @media(max-width:380px){body{padding-right:10px;padding-left:10px}.game-frame{min-height:355px}.game-heading h1{font-size:43px}.overlay-card{padding:17px 15px 13px}.overlay-card h2{font-size:42px}.intro-card{padding:17px 16px}.overlay-card p{font-size:10px}.camera-card{padding:10px}.side-card-head h2{font-size:25px}.camera-preview{min-height:115px}.howto-card h2{font-size:25px}.side-column{gap:8px}.manual-hint{display:none}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 
+/* Camera play uses a portrait 9:16 camera stage with the dance track layered on top. */
+.ar-stage{display:none}
+body.camera-ar-mode{padding:0;min-height:100dvh;overflow:hidden;background:#050509}
+body.camera-ar-mode .topbar,
+body.camera-ar-mode .game-heading,
+body.camera-ar-mode .side-column,
+body.camera-ar-mode .game-toolbar,
+body.camera-ar-mode .manual-panel,
+body.camera-ar-mode .footer{display:none!important}
+body.camera-ar-mode .page-wrap,
+body.camera-ar-mode .layout,
+body.camera-ar-mode .game-column{display:block;width:100%;max-width:none;margin:0;padding:0}
+body.camera-ar-mode .game-frame{position:fixed;z-index:20;top:50%;left:50%;width:min(100vw,56.25dvh);height:min(100dvh,177.7778vw);min-height:0;aspect-ratio:9/16;transform:translate(-50%,-50%);overflow:hidden;border:0;border-radius:0;background:#050509;box-shadow:none;transition:none}
+body.camera-ar-mode .ar-stage{display:block;position:absolute;inset:0;z-index:0;overflow:hidden;background:#050509}
+body.camera-ar-mode #cameraPreview{position:absolute;inset:0;width:100%;height:100%;min-height:0;margin:0;aspect-ratio:9/16;overflow:hidden;border:0;border-radius:0;background:#050509}
+body.camera-ar-mode #cameraVideo{width:100%;height:100%;object-fit:cover;object-position:center;transform:scaleX(-1)}
+body.camera-ar-mode #poseCanvas{display:none}
+body.camera-ar-mode .camera-placeholder{font-size:10px}
+body.camera-ar-mode .camera-placeholder .placeholder-frame{width:64px;height:64px;font-size:28px}
+body.camera-ar-mode #gameCanvas{z-index:1}
+body.camera-ar-mode .game-topline{top:max(12px,env(safe-area-inset-top));left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));gap:8px}
+body.camera-ar-mode .game-brand{font-size:15px;text-shadow:0 2px 9px #000}
+body.camera-ar-mode .game-wave{font-size:12px;text-shadow:0 2px 9px #000}
+body.camera-ar-mode .icon-button{width:38px;height:36px;background:#11101bcc;border-color:#ffffff45;backdrop-filter:blur(8px)}
+body.camera-ar-mode .hud{top:calc(max(12px,env(safe-area-inset-top)) + 48px);left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));gap:8px}
+body.camera-ar-mode .score-number{font-size:25px;text-shadow:0 2px 8px #000}
+body.camera-ar-mode .hud-label,
+body.camera-ar-mode .timer-value{font-size:12px;text-shadow:0 2px 8px #000}
+body.camera-ar-mode .hearts{gap:2px}
+body.camera-ar-mode .heart{font-size:15px}
+body.camera-ar-mode .screen-overlay{background:#05050988;padding:16px;backdrop-filter:blur(4px)}
+body.camera-ar-mode .overlay-card{width:min(420px,100%);padding:22px 20px 18px;background:#17131deb;backdrop-filter:blur(14px)}
+body.camera-ar-mode .camera-rec{top:auto;bottom:max(10px,env(safe-area-inset-bottom));left:10px;font-size:8px}
+body.camera-ar-mode .tracking-indicator{bottom:max(10px,env(safe-area-inset-bottom));right:10px;font-size:8px}
+@media(orientation:landscape) and (max-height:600px){body.camera-ar-mode .game-frame::after{content:'GIRÁ EL CELULAR PARA JUGAR';position:absolute;z-index:8;inset:0;display:grid;place-items:center;padding:24px;background:#090811eF;color:#fff;font-size:clamp(14px,3vw,22px);font-weight:900;letter-spacing:2px;text-align:center}}
+
 .camera-alert{margin:0 0 12px;padding:14px 16px;border:1px solid #ff8f9380;border-radius:10px;background:#3b2029;color:#fff;overflow-wrap:anywhere;scroll-margin:16px}.camera-alert strong{display:block;font-size:14px;line-height:1.4}.camera-alert p{margin:6px 0 0;font-size:13px;line-height:1.5;color:#ffe0e4}.screen-overlay{overflow-y:auto}.overlay-card{flex-shrink:0;margin:auto}
 .lane-up{left:39%}.lane-down{right:39%}.lane-caption{font-size:16px;color:#ffffffb0}.manual-panel:not(.hidden){display:flex}.manual-panel{gap:9px}.control-arrow,.control-duck{width:44px;height:40px;display:grid;place-items:center;padding:0;border:1px solid #4e3b60;border-radius:8px;background:#211a2c;color:#f4eaff;font-size:22px;font-weight:800;touch-action:manipulation;cursor:pointer}.control-arrow:active,.control-duck:active,.control-duck.pressed{background:#4b2852;border-color:#ff49a3;transform:translateY(1px)}.control-duck{font-size:22px}.manual-hint{margin-left:8px}@media(max-width:570px){.manual-panel{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}.manual-panel.hidden{display:none!important}.manual-hint{grid-column:1/-1;margin:0;text-align:center}.control-arrow,.control-duck{width:100%;height:46px}.lane-up{left:38%}.lane-down{right:38%}}
-
