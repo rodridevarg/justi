@@ -36,7 +36,7 @@ async function runTest(simulateFailure = false) {
     let setup = '<script>Object.defineProperty(navigator.mediaDevices,"getUserMedia",{value:async()=>parent.testStream.clone()});<\/script>';
     if (simulateFailure) {
       const imports = {
-        [new URL('../pose-detector.mjs?v=0.3.1', location.href).href]: 'data:text/javascript,' + encodeURIComponent('export async function loadPoseDetector(){throw new Error("No se pudo descargar el detector corporal. Revisá tu conexión a Internet y volvé a intentarlo.")}'),
+        [new URL('../pose-detector.mjs?v=0.3.2', location.href).href]: 'data:text/javascript,' + encodeURIComponent('export async function loadPoseDetector(){throw new Error("No se pudo descargar el detector corporal. Revisá tu conexión a Internet y volvé a intentarlo.")}'),
       };
       setup += '<script type="importmap">' + JSON.stringify({ imports }) + '<\/script>';
     }
@@ -47,7 +47,7 @@ async function runTest(simulateFailure = false) {
     // The module must have installed its event listeners before starting.
     await wait(800);
     doc.querySelector('#cameraStart').click();
-    await until(() => doc.querySelector('#cameraStart').textContent.includes('EMPEZAR BAILE') || !doc.querySelector('#cameraError').classList.contains('hidden'), 'No terminó la calibración');
+    await until(() => doc.querySelector('#cameraStart').textContent.includes('EMPEZAR AHORA') || !doc.querySelector('#cameraError').classList.contains('hidden'), 'No terminó la calibración');
     if (simulateFailure) {
       const alert = doc.querySelector('#cameraError');
       const rect = alert.getBoundingClientRect();
@@ -67,7 +67,7 @@ async function runTest(simulateFailure = false) {
     if (!stage.contains(preview)) throw new Error('La cámara no pasó a la interfaz AR');
     if (Math.abs(portrait.width / portrait.height - 9 / 16) > 0.02) throw new Error('La interfaz AR no quedó en formato vertical 9:16');
     log('OK: cámara en el escenario AR vertical 9:16.');
-    doc.querySelector('#cameraStart').click();
+    await until(() => doc.querySelector('#gameFrame').classList.contains('is-playing'), 'La cuenta regresiva no arrancó sola', 8000);
     if (doc.querySelector('#pauseButton').disabled) throw new Error('No se habilitó la pausa');
     await until(() => doc.querySelector('#countdownOverlay').classList.contains('hidden'), 'No terminó la cuenta regresiva', 8000);
     await until(() => doc.querySelector('#gameFrame').classList.contains('is-playing'), 'No arrancó la partida', 8000);
