@@ -36,7 +36,7 @@ async function runTest(simulateFailure = false) {
     let setup = '<script>Object.defineProperty(navigator.mediaDevices,"getUserMedia",{value:async()=>parent.testStream.clone()});<\/script>';
     if (simulateFailure) {
       const imports = {
-        ['./pose-detector.mjs?v=0.3.0']: 'data:text/javascript,' + encodeURIComponent('export async function loadPoseDetector(){throw new Error("No se pudo descargar el detector corporal. Revisá tu conexión a Internet y volvé a intentarlo.")}'),
+        [new URL('../pose-detector.mjs?v=0.3.0', location.href).href]: 'data:text/javascript,' + encodeURIComponent('export async function loadPoseDetector(){throw new Error("No se pudo descargar el detector corporal. Revisá tu conexión a Internet y volvé a intentarlo.")}'),
       };
       setup += '<script type="importmap">' + JSON.stringify({ imports }) + '<\/script>';
     }
