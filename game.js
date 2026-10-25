@@ -9,6 +9,9 @@ const BEAT = 60 / DANCE_BPM;
 const NOTE_TRAVEL = 1.65;
 const PERFECT_WINDOW = 0.17;
 const GOOD_WINDOW = 0.38;
+const CALIBRATION_SAMPLES_REQUIRED = 8;
+const CALIBRATION_STABLE_MS = 1350;
+const CALIBRATION_GAP_MS = 1800;
 const ACTIONS = ['left', 'down', 'up', 'right'];
 const ACTION_LABELS = { left: 'IZQUIERDA', down: 'ABAJO', up: 'ARRIBA', right: 'DERECHA' };
 const ACTION_GLYPHS = { left: '←', down: '↓', up: '↑', right: '→' };
@@ -636,6 +639,14 @@ function updateFrame(now) {
     }
   }
 
+  if (state.phase === 'calibrating') {
+    if (state.calibrationSamples.length && state.lastBodyAt && now - state.lastBodyAt > CALIBRATION_GAP_MS) {
+      state.calibrationSamples = [];
+      state.calibrationStarted = 0;
+    }
+    progressCalibration();
+  }
+
   if (state.mode === 'camera' && state.phase === 'playing' && state.lastBodyAt > 0 && now - state.lastBodyAt > 1300) {
     pauseGame(true);
   }
@@ -671,10 +682,10 @@ function startCalibration() {
 function progressCalibration() {
   const now = performance.now();
   const fraction = state.calibrationSamples.length
-    ? Math.min(1, state.calibrationSamples.length / 14, (now - state.calibrationStarted) / 1350)
+    ? Math.min(1, state.calibrationSamples.length / CALIBRATION_SAMPLES_REQUIRED, (now - state.calibrationStarted) / CALIBRATION_STABLE_MS)
     : 0;
   ui.calibrationProgress.style.width = `${Math.min(96, fraction * 100)}%`;
-  const enoughSamples = state.calibrationSamples.length >= 14;
+  const enoughSamples = state.calibrationSamples.length >= CALIBRATION_SAMPLES_REQUIRED;
 
   if (enoughSamples && fraction >= 1 && state.calibrationHold) {
     state.baseline = makeBaseline(state.calibrationSamples);
@@ -698,7 +709,7 @@ function progressCalibration() {
     ui.startOverlay.querySelector('p').textContent = 'La cámara te sigue. Arrancá cuando estés listo.';
     ui.cameraStart.innerHTML = '<span class="camera-icon" aria-hidden="true">◎</span> EMPEZAR BAILE <span class="button-arrow">→</span>';
     ui.manualStart.textContent = 'CAMBIAR A CONTROLES MANUALES';
-  } else if (now - state.calibrationWaitStarted > 10000 && !enoughSamples) {
+  } else if (now - state.calibrationWaitStarted > 10000 && !enoughSamples && ui.calibrationLabel.textContent !== 'NO ENCONTRAMOS TU POSE') {
     ui.calibrationIcon.textContent = '↗';
     ui.calibrationLabel.textContent = 'NO ENCONTRAMOS TU POSE';
     ui.calibrationTitle.innerHTML = 'DALE, UN<br /><span>ÚLTIMO INTENTO.</span>';
@@ -706,6 +717,9 @@ function progressCalibration() {
     ui.calibrationFootnote.textContent = 'CANCELÁ PARA CAMBIAR A LOS CONTROLES MANUALES';
     ui.calibrationProgress.style.width = '0%';
   } else if (enoughSamples && fraction < 1) {
+    ui.calibrationIcon.textContent = '◉';
+    ui.calibrationLabel.textContent = 'POSE DETECTADA';
+    ui.calibrationTitle.innerHTML = 'CALIBRANDO<br /><span>ESTATE QUIETO.</span>';
     ui.calibrationHint.textContent = `Perfecto. Quedate quieto un momento… ${Math.ceil((1 - fraction) * 1.35)} s`;
   }
 }
@@ -713,12 +727,17 @@ function progressCalibration() {
 function handlePose(body) {
   if (body) {
     state.body = body;
-    state.lastBodyAt = performance.now();
+    const now = performance.now();
     if (state.phase === 'calibrating') {
-      if (!state.calibrationSamples.length) state.calibrationStarted = performance.now();
+      if (state.calibrationSamples.length && state.lastBodyAt && now - state.lastBodyAt > CALIBRATION_GAP_MS) {
+        state.calibrationSamples = [];
+        state.calibrationStarted = now;
+      }
+      if (!state.calibrationSamples.length) state.calibrationStarted = now;
       state.calibrationSamples.push(body);
-      if (state.calibrationSamples.length > 45) state.calibrationSamples.shift();
+      if (state.calibrationSamples.length > 30) state.calibrationSamples.shift();
     }
+    state.lastBodyAt = now;
     setTracking(true);
     paintPosePreview(body);
     updatePlayerFromPose(body);
@@ -735,8 +754,6 @@ function handlePose(body) {
     state.bodyAction = null;
     state.highStreak = 0;
     state.armStreak = 0;
-    state.calibrationSamples = [];
-    state.calibrationStarted = 0;
     setTracking(false);
     poseCtx.clearRect(0, 0, ui.poseCanvas.width, ui.poseCanvas.height);
   }
