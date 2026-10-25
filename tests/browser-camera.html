@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prueba real del detector — Body Dodge</title>
+<style>body{margin:16px;background:#111019;color:#fff;font:16px system-ui}button{padding:12px}iframe{display:block;width:390px;max-width:100%;height:820px;border:1px solid #777;margin-top:12px}#result{white-space:pre-wrap}canvas{display:none}</style>
+<h1>Prueba de cámara con video sintético</h1>
+<p>Usa la imagen pública de ejemplo de MediaPipe. No accede a la cámara del dispositivo.</p>
+<button id="run">Probar descarga, detección y calibración</button>
+<button id="runError">Probar error visible después del permiso</button>
+<pre id="result" role="status">Pendiente</pre><canvas id="fixture" width="640" height="480"></canvas><iframe id="game" title="Juego a 390 píxeles"></iframe>
+<script type="module">
+const result = document.querySelector('#result');
+const game = document.querySelector('#game');
+const log = (text) => { result.textContent += '\n' + text; };
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function until(predicate, message, timeout = 65000) {
+  const start = performance.now();
+  while (!predicate()) {
+    if (performance.now() - start > timeout) throw new Error(message);
+    await wait(100);
+  }
+}
+async function runTest(simulateFailure = false) {
+  for (const button of document.querySelectorAll('button')) button.disabled = true;
+  result.textContent = 'En curso';
+  let drawTimer;
+  try {
+    const image = new Image(); image.crossOrigin = 'anonymous';
+    image.src = 'https://storage.googleapis.com/mediapipe-assets/pose.jpg';
+    await image.decode();
+    const canvas = document.querySelector('#fixture');
+    const ctx = canvas.getContext('2d');
+    const draw = () => ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    draw(); drawTimer = setInterval(draw, 65);
+    window.testStream = canvas.captureStream(15);
+    const html = await (await fetch('../index.html')).text();
+    let setup = '<script>Object.defineProperty(navigator.mediaDevices,"getUserMedia",{value:async()=>parent.testStream.clone()});<\/script>';
+    if (simulateFailure) {
+      const imports = {
+        [new URL('../pose-detector.mjs?v=0.1.1', location.href).href]: 'data:text/javascript,' + encodeURIComponent('export async function loadPoseDetector(){throw new Error("No se pudo descargar el detector corporal. Revisá tu conexión a Internet y volvé a intentarlo.")}'),
+      };
+      setup += '<script type="importmap">' + JSON.stringify({ imports }) + '<\/script>';
+    }
+    game.srcdoc = html.replace('<head>', `<head><base href="${new URL('../', location.href)}">`)
+      .replace('<script type="module"', setup + '<script type="module"');
+    await until(() => game.contentDocument?.querySelector('#cameraStart'), 'No cargó el juego');
+    const doc = game.contentDocument;
+    // The module must have installed its event listeners before starting.
+    await wait(800);
+    doc.querySelector('#cameraStart').click();
+    await until(() => doc.querySelector('#cameraStart').textContent.includes('EMPEZAR PARTIDA') || !doc.querySelector('#cameraError').classList.contains('hidden'), 'No terminó la calibración');
+    if (simulateFailure) {
+      const alert = doc.querySelector('#cameraError');
+      const rect = alert.getBoundingClientRect();
+      if (alert.classList.contains('hidden') || rect.width === 0 || rect.height === 0) throw new Error('El aviso quedó oculto');
+      if (!doc.querySelector('#cameraErrorMessage').textContent.includes('No se pudo descargar')) throw new Error('No se muestra la causa');
+      if (doc.querySelector('#cameraStart').disabled || doc.querySelector('#manualStart').disabled) throw new Error('No se puede reintentar');
+      log('PASS — permiso aceptado, fallo del detector, mensaje visible y reintento habilitado.');
+      return;
+    }
+    if (!doc.querySelector('#cameraError').classList.contains('hidden')) throw new Error(doc.querySelector('#cameraErrorMessage').textContent);
+    log('OK: biblioteca, WASM y modelo reales cargados.');
+    log('OK: detectó hombros/caderas y completó la calibración.');
+    if (!doc.querySelector('#trackingLabel').textContent.includes('SIGUIÉNDOTE')) throw new Error('No hay seguimiento');
+    doc.querySelector('#cameraStart').click();
+    if (doc.querySelector('#pauseButton').disabled) throw new Error('No se habilitó la pausa');
+    await until(() => doc.querySelector('#countdownOverlay').classList.contains('hidden'), 'No terminó la cuenta regresiva', 8000);
+    await until(() => doc.querySelector('#scoreValue').textContent !== '000000', 'No avanza la partida', 8000);
+    log('OK: arranca la partida y aumenta el puntaje.');
+    doc.querySelector('#pauseButton').click();
+    log('PASS — navegador real, video sintético y ancho de celular.');
+  } catch (error) {
+    log('FAIL: ' + error.message);
+  } finally {
+    clearInterval(drawTimer);
+    window.testStream?.getTracks().forEach((track) => track.stop());
+    for (const button of document.querySelectorAll('button')) button.disabled = false;
+  }
+}
+document.querySelector('#run').onclick = () => runTest(false);
+document.querySelector('#runError').onclick = () => runTest(true);
+</script></html>
+

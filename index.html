@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800;900&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=0.1.1" />
   </head>
   <body>
     <div class="page-wrap">
@@ -24,6 +24,7 @@
         <section class="game-column" aria-label="Partida de Body Dodge">
           <div class="game-heading"><p class="eyebrow"><span class="live-dot"></span> REFLEJOS ACTIVADOS</p><h1>QUE NO TE <span>ATRAPEN.</span></h1></div>
 
+          <div id="cameraError" class="camera-alert hidden" role="alert" aria-live="assertive"><strong>No pudimos activar el juego con cámara</strong><p id="cameraErrorMessage"></p></div>
           <div class="game-frame" id="gameFrame">
             <div class="game-topline"><span class="game-brand">BODY <b>DODGE</b></span><span class="game-wave" id="gameWave">RONDA <b>01</b></span><button class="icon-button" id="muteBtn" type="button" aria-label="Activar o desactivar sonido" title="Sonido">♪</button></div>
             <canvas id="gameCanvas" width="960" height="600" role="img" aria-label="Pista futurista de juego con tres carriles y un personaje"></canvas>
@@ -44,7 +45,7 @@
             </div>
 
             <div class="screen-overlay hidden" id="calibrationOverlay">
-              <div class="overlay-card compact-card"><div class="calibration-icon" id="calibrationIcon">◉</div><span class="pretitle" id="calibrationLabel">CÁMARA CONECTADA</span><h2 id="calibrationTitle">BUSCANDO<br /><span>TU POSE.</span></h2><p id="calibrationHint">Parate frente a la cámara, con la cabeza y los hombros a la vista.</p><div class="calibration-meter"><div id="calibrationProgress"></div></div><span class="overlay-footnote" id="calibrationFootnote">LA IMAGEN SE PROCESA EN TU DISPOSITIVO</span><button class="text-button" id="calibrationCancel" type="button">CANCELAR Y VOLVER</button></div>
+              <div class="overlay-card compact-card"><div class="calibration-icon" id="calibrationIcon">◉</div><span class="pretitle" id="calibrationLabel">CÁMARA CONECTADA</span><h2 id="calibrationTitle">BUSCANDO<br /><span>TU POSE.</span></h2><p id="calibrationHint">Parate frente a la cámara, con los hombros y las caderas a la vista.</p><div class="calibration-meter"><div id="calibrationProgress"></div></div><span class="overlay-footnote" id="calibrationFootnote">LA IMAGEN SE PROCESA EN TU DISPOSITIVO</span><button class="text-button" id="calibrationCancel" type="button">CANCELAR Y VOLVER</button></div>
             </div>
 
             <div class="screen-overlay hidden" id="pauseOverlay">
@@ -75,6 +76,8 @@
       </main>
       <footer class="footer"><span>HECHO PARA JUGAR Y MOVERSE</span><span>BODY DODGE <b>✳</b> 2026</span></footer>
     </div>
-    <script type="module" src="./game.js"></script>
+    <script type="module" src="./game.js?v=0.1.1"></script>
   </body>
 </html>
+
+
